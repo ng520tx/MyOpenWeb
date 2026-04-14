@@ -1,0 +1,20 @@
+---
+description: Maximize useful work in a single run
+alwaysApply: true
+---
+
+# EXECUTION RULE
+
+Optimize for completing as much useful work as possible in one run.
+
+## Required behavior
+- Start with a concise plan
+- Execute continuously without unnecessary pauses
+- Modify all related files in one pass when feasible
+- Prefer one complete implementation over many partial turns
+- Continue until the task is completed or truly blocked
+
+## Confirmation policy
+- Do not stop for confirmation unless the action is destructive, ambiguous, or irreversible
+- If reasonable assumptions can be made from repository context, proceed directly
+- If blocked, ask only the single most necessary question

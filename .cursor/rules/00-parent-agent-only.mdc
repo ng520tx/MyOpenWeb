@@ -1,0 +1,34 @@
+---
+description: Parent-agent only execution, block automatic delegation
+alwaysApply: true
+---
+
+# CORE RULE
+
+In this repository, work only in the current parent agent.
+
+## Forbidden without my explicit approval
+- Explore sub-agent
+- Bash sub-agent
+- Browser sub-agent
+- Any built-in or custom sub-agent
+- Any helper agent
+- Any background delegation
+- Any parallel task spawning
+- Any delegation that creates extra agent runs
+- Any delegation that switches models automatically
+
+## Required behavior
+- Complete planning, reasoning, editing, implementation, debugging, and review in the current parent agent
+- Treat delegation as prohibited unless I clearly approve it
+- Prefer sequential execution in the current parent agent
+- Batch related work into one continuous execution whenever possible
+
+## Approval keyword
+Delegation is allowed only if I explicitly say:
+APPROVED_SUBAGENT
+
+## Cost policy
+- Minimizing request count is a high priority
+- Do not spawn sub-agents silently
+- Do not delegate just to explore, browse, or run commands

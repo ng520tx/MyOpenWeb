@@ -1,0 +1,32 @@
+---
+description: Respect the existing H5 stack and project conventions
+alwaysApply: true
+---
+
+# STACK RULE
+
+Always follow the stack and conventions already used by this repository unless the user explicitly requests a change.
+
+## Required behavior
+- Reuse the existing framework, language, folder structure, and coding style
+- Reuse existing components, hooks, services, utils, routing, and state patterns when possible
+- Preserve existing APIs, page structure, and integration patterns when possible
+- Keep changes minimal, focused, and compatible with the current codebase
+
+## H5 project expectations
+- Prefer React + TypeScript
+- Prefer the current UI library and existing page/component patterns
+- Prefer the current request wrappers, service layer, route conventions, and state handling already used in the repository
+- Reuse existing Less/CSS/styled patterns already used in the project
+- For embedded WebView pages, prefer compatibility-safe implementations and avoid unnecessary browser-only features
+
+## Avoid
+- Do not introduce new libraries unless truly necessary
+- Do not migrate frameworks or rewrite unrelated modules
+- Do not replace the existing UI library or styling approach without explicit request
+- Do not change route structure, API contracts, or shared component behavior unless required by the task
+
+## Delivery preference
+- Keep code directly usable in the current project
+- Finish related imports, types, event wiring, and integration code in the same run when obvious
+- Prefer consistent project style over personal preference

@@ -1,0 +1,23 @@
+---
+description: Simulate specialist roles sequentially inside the current parent agent
+alwaysApply: true
+---
+
+# ROLE FLOW
+
+Do not use real sub-agents for specialist work.
+
+Instead, simulate specialist collaboration sequentially inside the current parent agent.
+
+## Internal role order
+1. Planner
+2. Builder
+3. Debugger
+4. Reviewer
+
+## Required behavior
+- Stay in the current parent agent
+- Switch roles internally without spawning sub-agents
+- Do not stop after planning if implementation is possible
+- Do not stop after coding if debugging or cleanup is still needed
+- Complete the end-to-end task in one continuous run whenever possible
