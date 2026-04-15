@@ -29,13 +29,11 @@ body {
 
 * {
   box-sizing: border-box;
-  -webkit-user-select: none;
-  user-select: none;
 }
 
-input, textarea {
-  -webkit-user-select: text;
-  user-select: text;
+button, nav, [role="button"] {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 ::-webkit-scrollbar {
@@ -44,4 +42,27 @@ input, textarea {
 ::-webkit-scrollbar-thumb {
   background: rgba(255,255,255,0.15);
   border-radius: 2px;
+}
+
+/* input fields for settings */
+@layer components {
+  .input-field {
+    @apply w-full rounded-lg bg-neutral-700 text-sm text-neutral-100 placeholder-neutral-500 px-3 py-2 outline-none border border-transparent focus:border-blue-500 transition-colors;
+  }
+}
+
+/* slide-in animations */
+@keyframes slide-in-left {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+.animate-slide-in-left {
+  animation: slide-in-left 0.2s ease-out;
+}
+.animate-slide-in-right {
+  animation: slide-in-right 0.2s ease-out;
 }

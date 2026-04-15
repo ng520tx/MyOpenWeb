@@ -6,6 +6,22 @@ export interface ChatMessage {
   done: boolean;
   error?: string;
   model?: string;
+  files?: FileAttachment[];
+}
+
+export interface FileAttachment {
+  name: string;
+  size: number;
+  type: string;
+  content: string;
+}
+
+export interface Conversation {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface ChatSession {
@@ -27,11 +43,15 @@ export interface ModelConfig {
 
 export interface AppSettings {
   apiBaseUrl: string;
+  apiKey: string;
   model: string;
   systemPrompt: string;
   temperature: number;
   maxTokens: number;
   streamOutput: boolean;
+  ttsEnabled: boolean;
+  ttsLang: string;
+  ttsRate: number;
 }
 
 export type TextStreamUpdate = {

@@ -1,7 +1,8 @@
-import type { ChatMessage } from '@/types';
+import type { ChatMessage, FileAttachment } from '@/types';
 
 interface ChatCompletionOptions {
   baseUrl: string;
+  apiKey?: string;
   model: string;
   messages: ChatMessage[];
   systemPrompt?: string;
@@ -9,12 +10,9 @@ interface ChatCompletionOptions {
   maxTokens?: number;
   stream?: boolean;
   signal?: AbortSignal;
+  files?: FileAttachment[];
 }
 
-/**
- * 发送聊天补全请求，返回 [Response, AbortController]
- * 兼容 Ollama / OpenAI / 任何 OpenAI 格式的 API
- */
 export async function chatCompletion(
   opts: ChatCompletionOptions
 ): Promise<[Response, AbortController]> {
@@ -23,7 +21,7 @@ export async function chatCompletion(
     ? anySignal([opts.signal, controller.signal])
     : controller.signal;
 
-  const apiMessages = [];
+  const apiMessages: { role: string; content: string }[] = [];
 
   if (opts.systemPrompt) {
     apiMessages.push({ role: 'system', content: opts.systemPrompt });
@@ -31,7 +29,17 @@ export async function chatCompletion(
 
   for (const msg of opts.messages) {
     if (msg.role === 'system') continue;
-    apiMessages.push({ role: msg.role, content: msg.content });
+
+    let content = msg.content;
+    const files = msg.files ?? (msg === opts.messages[opts.messages.length - 1] ? opts.files : undefined);
+    if (files?.length) {
+      const fileContext = files
+        .map((f) => `--- File: ${f.name} ---\n${f.content}\n--- End ---`)
+        .join('\n\n');
+      content = `${fileContext}\n\n${content}`;
+    }
+
+    apiMessages.push({ role: msg.role, content });
   }
 
   const body = {
@@ -44,11 +52,16 @@ export async function chatCompletion(
 
   const url = `${opts.baseUrl.replace(/\/+$/, '')}/chat/completions`;
 
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (opts.apiKey) {
+    headers['Authorization'] = `Bearer ${opts.apiKey}`;
+  }
+
   const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(body),
     signal: mergedSignal,
   });

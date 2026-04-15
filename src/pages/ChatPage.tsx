@@ -1,51 +1,65 @@
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect } from 'react';
 import ChatNavbar from '@/components/chat/ChatNavbar';
 import MessageList from '@/components/chat/MessageList';
 import MessageInput from '@/components/chat/MessageInput';
-import { useChatStore } from '@/stores';
+import { useAppStore } from '@/stores';
 import { chatCompletion } from '@/apis/chat';
 import { createOpenAITextStream } from '@/apis/streaming';
+import { configureTTS, resetStreamTTS, feedStreamTTS, flushStreamTTS, stopTTS } from '@/utils/tts';
 
 export default function ChatPage() {
-  const {
-    messages,
-    generating,
-    settings,
-    addMessage,
-    appendContent,
-    updateMessage,
-    setGenerating,
-    clearMessages,
-  } = useChatStore();
+  const generating = useAppStore((s) => s.generating);
+  const settings = useAppStore((s) => s.settings);
+  const pendingFiles = useAppStore((s) => s.pendingFiles);
+  const activeConversationId = useAppStore((s) => s.activeConversationId);
+  const conversations = useAppStore((s) => s.conversations);
+
+  const activeConv = conversations.find((c) => c.id === activeConversationId);
+  const messages = activeConv?.messages ?? [];
 
   const abortRef = useRef<AbortController | null>(null);
 
+  useEffect(() => {
+    configureTTS({
+      enabled: settings.ttsEnabled,
+      lang: settings.ttsLang,
+      rate: settings.ttsRate,
+    });
+  }, [settings.ttsEnabled, settings.ttsLang, settings.ttsRate]);
+
   const handleSend = useCallback(
     async (text: string) => {
-      if (!text.trim() || generating) return;
+      if (!text.trim() || useAppStore.getState().generating) return;
 
-      addMessage('user', text.trim());
-      const aiId = addMessage('assistant', '');
-      setGenerating(true);
+      const store = useAppStore.getState();
+      const files = store.pendingFiles.length > 0 ? [...store.pendingFiles] : undefined;
+
+      store.addMessage('user', text.trim(), files);
+      store.clearPendingFiles();
+
+      const aiId = store.addMessage('assistant', '');
+      store.setGenerating(true);
+      resetStreamTTS();
 
       try {
+        const currentMessages = useAppStore.getState().getMessages();
         const [res, controller] = await chatCompletion({
           baseUrl: settings.apiBaseUrl,
+          apiKey: settings.apiKey || undefined,
           model: settings.model,
-          messages: [
-            ...useChatStore.getState().messages.slice(0, -1),
-          ],
+          messages: currentMessages.slice(0, -1),
           systemPrompt: settings.systemPrompt,
           temperature: settings.temperature,
           maxTokens: settings.maxTokens,
           stream: settings.streamOutput,
+          files,
         });
 
         abortRef.current = controller;
 
         if (!res.body) {
-          updateMessage(aiId, { content: 'No response body', done: true, error: 'No response body' });
-          setGenerating(false);
+          useAppStore.getState().updateMessage(aiId, { content: 'No response body', done: true, error: 'No response body' });
+          useAppStore.getState().setGenerating(false);
           return;
         }
 
@@ -53,48 +67,51 @@ export default function ChatPage() {
           const stream = await createOpenAITextStream(res.body);
           for await (const update of stream) {
             if (update.error) {
-              updateMessage(aiId, { error: update.error, done: true });
+              useAppStore.getState().updateMessage(aiId, { error: update.error, done: true });
               break;
             }
             if (update.value) {
-              appendContent(aiId, update.value);
+              useAppStore.getState().appendContent(aiId, update.value);
+              feedStreamTTS(update.value);
             }
             if (update.done) {
-              updateMessage(aiId, { done: true });
+              useAppStore.getState().updateMessage(aiId, { done: true });
               break;
             }
           }
+          flushStreamTTS();
         } else {
           const data = await res.json();
           const content = data.choices?.[0]?.message?.content ?? '';
-          updateMessage(aiId, { content, done: true });
+          useAppStore.getState().updateMessage(aiId, { content, done: true });
+          flushStreamTTS();
         }
       } catch (err: unknown) {
         if (err instanceof DOMException && err.name === 'AbortError') {
-          updateMessage(aiId, { done: true });
+          useAppStore.getState().updateMessage(aiId, { done: true });
         } else {
           const errMsg = err instanceof Error ? err.message : String(err);
-          updateMessage(aiId, { content: `Error: ${errMsg}`, done: true, error: errMsg });
+          useAppStore.getState().updateMessage(aiId, { content: `Error: ${errMsg}`, done: true, error: errMsg });
         }
       } finally {
-        setGenerating(false);
+        useAppStore.getState().setGenerating(false);
+        useAppStore.getState().persistNow();
         abortRef.current = null;
       }
     },
-    [generating, settings, addMessage, appendContent, updateMessage, setGenerating]
+    [settings]
   );
 
   const handleStop = useCallback(() => {
     abortRef.current?.abort();
-    setGenerating(false);
-  }, [setGenerating]);
+    useAppStore.getState().setGenerating(false);
+    useAppStore.getState().persistNow();
+    stopTTS();
+  }, []);
 
   return (
     <div className="flex flex-col h-full">
-      <ChatNavbar
-        model={settings.model}
-        onClear={clearMessages}
-      />
+      <ChatNavbar />
       <MessageList messages={messages} generating={generating} />
       <MessageInput
         onSend={handleSend}
