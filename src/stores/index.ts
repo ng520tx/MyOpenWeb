@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { ChatMessage, Conversation, AppSettings, FileAttachment } from '@/types';
 import { DEFAULT_SETTINGS, STORAGE_KEYS } from '@/constants';
+import { resolveApiUrl } from '@/utils/url';
 
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
@@ -23,7 +24,14 @@ function saveJSON(key: string, value: unknown) {
 }
 
 function loadSettings(): AppSettings {
-  return { ...DEFAULT_SETTINGS, ...loadJSON<Partial<AppSettings>>(STORAGE_KEYS.SETTINGS, {}) };
+  const saved = loadJSON<Partial<AppSettings>>(STORAGE_KEYS.SETTINGS, {});
+  const merged = { ...DEFAULT_SETTINGS, ...saved };
+  const fixedUrl = resolveApiUrl(merged.apiBaseUrl);
+  if (fixedUrl !== merged.apiBaseUrl) {
+    merged.apiBaseUrl = fixedUrl;
+    saveJSON(STORAGE_KEYS.SETTINGS, merged);
+  }
+  return merged;
 }
 
 function loadConversations(): Conversation[] {
@@ -34,6 +42,10 @@ function loadActiveId(): string | null {
   return localStorage.getItem(STORAGE_KEYS.ACTIVE_CONVERSATION_ID) || null;
 }
 
+function loadActiveKnowledgeId(): string | null {
+  return localStorage.getItem(STORAGE_KEYS.ACTIVE_KNOWLEDGE_ID) || null;
+}
+
 function stripFileContents(conversations: Conversation[]): Conversation[] {
   return conversations.map((c) => ({
     ...c,
@@ -41,7 +53,7 @@ function stripFileContents(conversations: Conversation[]): Conversation[] {
       if (!m.files?.length) return m;
       return {
         ...m,
-        files: m.files.map((f) => ({ ...f, content: '' })),
+        files: m.files.map((f) => ({ ...f, content: '', dataUrl: undefined })),
       };
     }),
   }));
@@ -52,11 +64,13 @@ function stripFileContents(conversations: Conversation[]): Conversation[] {
 interface AppState {
   conversations: Conversation[];
   activeConversationId: string | null;
+  activeKnowledgeId: string | null;
   generating: boolean;
   settings: AppSettings;
   pendingFiles: FileAttachment[];
   sidebarOpen: boolean;
   settingsOpen: boolean;
+  knowledgeOpen: boolean;
 
   // derived selectors
   getActiveConversation: () => Conversation | undefined;
@@ -64,6 +78,7 @@ interface AppState {
 
   // conversation
   createConversation: () => string;
+  hydrateConversations: (conversations: Conversation[]) => void;
   switchConversation: (id: string) => void;
   deleteConversation: (id: string) => void;
   renameConversation: (id: string, title: string) => void;
@@ -79,6 +94,10 @@ interface AppState {
   setGenerating: (v: boolean) => void;
   setSidebarOpen: (v: boolean) => void;
   setSettingsOpen: (v: boolean) => void;
+  setKnowledgeOpen: (v: boolean) => void;
+
+  // knowledge
+  setActiveKnowledgeId: (id: string | null) => void;
 
   // settings
   updateSettings: (partial: Partial<AppSettings>) => void;
@@ -93,6 +112,10 @@ export const useAppStore = create<AppState>((set, get) => {
   const savedConversations = loadConversations();
   const savedActiveId = loadActiveId();
 
+  function sortConversations(conversations: Conversation[]): Conversation[] {
+    return [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
   function persist() {
     const { conversations, activeConversationId } = get();
     saveJSON(STORAGE_KEYS.CONVERSATIONS, stripFileContents(conversations));
@@ -105,19 +128,21 @@ export const useAppStore = create<AppState>((set, get) => {
 
   function updateConversation(id: string, updater: (c: Conversation) => Conversation, shouldPersist = true) {
     set((s) => ({
-      conversations: s.conversations.map((c) => (c.id === id ? updater(c) : c)),
+      conversations: sortConversations(s.conversations.map((c) => (c.id === id ? updater(c) : c))),
     }));
     if (shouldPersist) persist();
   }
 
   return {
-    conversations: savedConversations,
+    conversations: sortConversations(savedConversations),
     activeConversationId: savedActiveId && savedConversations.some((c) => c.id === savedActiveId) ? savedActiveId : null,
+    activeKnowledgeId: loadActiveKnowledgeId(),
     generating: false,
     settings: loadSettings(),
     pendingFiles: [],
     sidebarOpen: false,
     settingsOpen: false,
+    knowledgeOpen: false,
 
     getActiveConversation: () => {
       const s = get();
@@ -140,12 +165,27 @@ export const useAppStore = create<AppState>((set, get) => {
         updatedAt: Date.now(),
       };
       set((s) => ({
-        conversations: [conv, ...s.conversations],
+        conversations: sortConversations([conv, ...s.conversations]),
         activeConversationId: id,
         pendingFiles: [],
       }));
       persist();
       return id;
+    },
+
+    hydrateConversations: (conversations) => {
+      const ordered = sortConversations(conversations);
+      const currentActiveId = get().activeConversationId;
+      const nextActiveId =
+        currentActiveId && ordered.some((c) => c.id === currentActiveId)
+          ? currentActiveId
+          : (ordered[0]?.id ?? null);
+
+      set({
+        conversations: ordered,
+        activeConversationId: nextActiveId,
+      });
+      persist();
     },
 
     switchConversation: (id) => {
@@ -230,6 +270,16 @@ export const useAppStore = create<AppState>((set, get) => {
     setGenerating: (v) => set({ generating: v }),
     setSidebarOpen: (v) => set({ sidebarOpen: v }),
     setSettingsOpen: (v) => set({ settingsOpen: v }),
+    setKnowledgeOpen: (v) => set({ knowledgeOpen: v }),
+
+    setActiveKnowledgeId: (id) => {
+      set({ activeKnowledgeId: id });
+      if (id) {
+        localStorage.setItem(STORAGE_KEYS.ACTIVE_KNOWLEDGE_ID, id);
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.ACTIVE_KNOWLEDGE_ID);
+      }
+    },
 
     updateSettings: (partial) => {
       set((s) => {

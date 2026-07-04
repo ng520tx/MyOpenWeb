@@ -1,14 +1,55 @@
 import { useRef, useCallback } from 'react';
 import { useAppStore } from '@/stores';
 import { MAX_FILE_SIZE, ACCEPTED_FILE_TYPES } from '@/constants';
+import { isBridgeAvailable, pickFile } from '@/bridge/moaBridge';
+
+function isImageFile(file: File): boolean {
+  return file.type.startsWith('image/');
+}
+
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function FileButton() {
   const inputRef = useRef<HTMLInputElement>(null);
   const addPendingFile = useAppStore((s) => s.addPendingFile);
 
   const handleClick = useCallback(() => {
+    if (isBridgeAvailable()) {
+      void (async () => {
+        const result = await pickFile({ accept: ACCEPTED_FILE_TYPES });
+        if (!result.success || !result.name) return;
+
+        const mimeType = result.mimeType || 'application/octet-stream';
+        if (mimeType.startsWith('image/') && result.dataUrl) {
+          addPendingFile({
+            name: result.name,
+            size: 0,
+            type: mimeType,
+            content: '',
+            isImage: true,
+            dataUrl: result.dataUrl,
+          });
+          return;
+        }
+
+        addPendingFile({
+          name: result.name,
+          size: 0,
+          type: mimeType,
+          content: result.content || '',
+        });
+      })();
+      return;
+    }
     inputRef.current?.click();
-  }, []);
+  }, [addPendingFile]);
 
   const handleChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -17,17 +58,29 @@ export default function FileButton() {
 
       for (const file of Array.from(files)) {
         if (file.size > MAX_FILE_SIZE) {
-          alert(`文件 "${file.name}" 超过 5MB 限制`);
+          alert(`文件 "${file.name}" 超过 10MB 限制`);
           continue;
         }
         try {
-          const content = await file.text();
-          addPendingFile({
-            name: file.name,
-            size: file.size,
-            type: file.type || 'text/plain',
-            content,
-          });
+          if (isImageFile(file)) {
+            const dataUrl = await readAsDataUrl(file);
+            addPendingFile({
+              name: file.name,
+              size: file.size,
+              type: file.type,
+              content: '',
+              isImage: true,
+              dataUrl,
+            });
+          } else {
+            const content = await file.text();
+            addPendingFile({
+              name: file.name,
+              size: file.size,
+              type: file.type || 'text/plain',
+              content,
+            });
+          }
         } catch {
           alert(`无法读取文件 "${file.name}"`);
         }
@@ -49,10 +102,9 @@ export default function FileButton() {
       />
       <button
         onClick={handleClick}
-        className="flex items-center justify-center w-9 h-9 rounded-xl bg-neutral-700 text-neutral-400 hover:text-neutral-200 active:bg-neutral-600 shrink-0 transition-colors"
-        title="添加文件"
+        className="flex items-center justify-center w-11 h-11 rounded-xl bg-neutral-700 text-neutral-400 active:bg-neutral-600 active:text-neutral-200 shrink-0 transition-colors"
       >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
         </svg>
       </button>

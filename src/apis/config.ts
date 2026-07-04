@@ -1,0 +1,106 @@
+import type { AppSettings, ProviderConfig } from '@/types';
+import { resolveApiUrl } from '@/utils/url';
+
+interface ProviderConfigPayload {
+  provider_type: ProviderConfig['providerType'];
+  provider_base_url: string;
+  provider_api_key: string;
+  embedding_model: string;
+  ocr_enabled: boolean;
+  ocr_base_url: string;
+  ocr_mode: ProviderConfig['ocrMode'];
+}
+
+type ProviderSettings = Pick<
+  AppSettings,
+  'providerType' | 'apiBaseUrl' | 'apiKey' | 'embeddingModel' | 'ocrEnabled' | 'ocrBaseUrl' | 'ocrMode'
+>;
+
+export interface ProviderVerifyResult {
+  ok: boolean;
+  provider_type: ProviderConfig['providerType'];
+  configured_base_url: string;
+  resolved_base_url?: string | null;
+  endpoint_url?: string | null;
+  models_count: number;
+  models: Array<{
+    id: string;
+    name: string;
+    size?: number;
+    modified_at?: string;
+  }>;
+  error?: string | null;
+}
+
+function toProviderPayload(settings: ProviderSettings): ProviderConfigPayload {
+  return {
+    provider_type: settings.providerType,
+    provider_base_url: resolveApiUrl(settings.apiBaseUrl.trim()),
+    provider_api_key: settings.apiKey.trim(),
+    embedding_model: (settings.embeddingModel || 'bge-m3').trim(),
+    ocr_enabled: settings.ocrEnabled,
+    ocr_base_url: (settings.ocrBaseUrl || 'http://localhost:8118').trim(),
+    ocr_mode: settings.ocrMode,
+  };
+}
+
+function fromProviderPayload(payload: ProviderConfigPayload): ProviderConfig {
+  return {
+    providerType: payload.provider_type,
+    apiBaseUrl: payload.provider_base_url,
+    apiKey: payload.provider_api_key,
+    embeddingModel: payload.embedding_model || 'bge-m3',
+    ocrEnabled: Boolean(payload.ocr_enabled),
+    ocrBaseUrl: payload.ocr_base_url || 'http://localhost:8118',
+    ocrMode: payload.ocr_mode === 'always' ? 'always' : 'auto',
+  };
+}
+
+export async function fetchProviderConfig(): Promise<ProviderConfig | null> {
+  try {
+    const res = await fetch('/api/config/provider');
+    if (!res.ok) return null;
+    const data = (await res.json()) as ProviderConfigPayload;
+    return fromProviderPayload(data);
+  } catch {
+    return null;
+  }
+}
+
+export async function syncProviderConfig(
+  settings: ProviderSettings
+): Promise<ProviderConfig> {
+  const payload = toProviderPayload(settings);
+  const res = await fetch('/api/config/provider', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Provider config sync failed: HTTP ${res.status}`);
+  }
+
+  return fromProviderPayload((await res.json()) as ProviderConfigPayload);
+}
+
+export async function verifyProviderConfig(
+  settings: ProviderSettings
+): Promise<ProviderVerifyResult> {
+  const payload = toProviderPayload(settings);
+  const res = await fetch('/api/config/provider/verify', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Provider config verify failed: HTTP ${res.status}`);
+  }
+
+  return (await res.json()) as ProviderVerifyResult;
+}

@@ -12,8 +12,13 @@ declare global {
 }
 
 interface MoaBridgeInstance {
-  callNative: (method: string, params?: Record<string, unknown>) => void;
+  callNative: (method: string, paramsJson?: string) => void;
   [key: string]: unknown;
+}
+
+function callNative(method: string, params?: Record<string, unknown>) {
+  const paramsJson = params ? JSON.stringify(params) : undefined;
+  window.moaBridge?.callNative(method, paramsJson);
 }
 
 // ==================== STT / TTS ====================
@@ -36,7 +41,7 @@ export const startSTT = async (params: {
       resolve(parsed as STTResult);
       delete window[cbFuncName];
     };
-    window.moaBridge?.callNative('startSTT', {
+    callNative('startSTT', {
       lang: params.lang ?? 'zh-CN',
       cbFuncName,
     });
@@ -44,7 +49,7 @@ export const startSTT = async (params: {
 };
 
 export const stopSTT = (): void => {
-  window.moaBridge?.callNative('stopSTT');
+  callNative('stopSTT');
 };
 
 interface TTSParams {
@@ -54,7 +59,7 @@ interface TTSParams {
 }
 
 export const playTTS = (params: TTSParams): void => {
-  window.moaBridge?.callNative('playTTS', {
+  callNative('playTTS', {
     text: params.text,
     lang: params.lang ?? 'zh-CN',
     rate: params.rate ?? 1.0,
@@ -62,7 +67,7 @@ export const playTTS = (params: TTSParams): void => {
 };
 
 export const stopTTS = (): void => {
-  window.moaBridge?.callNative('stopTTS');
+  callNative('stopTTS');
 };
 
 // ==================== File ====================
@@ -73,6 +78,8 @@ interface FilePickResult {
   name?: string;
   mimeType?: string;
   content?: string;
+  isImage?: boolean;
+  dataUrl?: string;
   message?: string;
 }
 
@@ -88,7 +95,7 @@ export const pickFile = async (params: {
       resolve(parsed as FilePickResult);
       delete window[cbFuncName];
     };
-    window.moaBridge?.callNative('pickFile', {
+    callNative('pickFile', {
       accept: params.accept ?? '*/*',
       cbFuncName,
     });
@@ -98,11 +105,11 @@ export const pickFile = async (params: {
 // ==================== Navigation ====================
 
 export const goBack = (): void => {
-  window.moaBridge?.callNative('goBack');
+  callNative('goBack');
 };
 
 export const setTitle = (title: string): void => {
-  window.moaBridge?.callNative('setTitle', { title });
+  callNative('setTitle', { title });
 };
 
 // ==================== SafeArea ====================
@@ -124,7 +131,7 @@ export const getSafeArea = async (params: {
       resolve(parsed as SafeAreaResult);
       delete window[cbFuncName];
     };
-    window.moaBridge?.callNative('getSafeArea', { cbFuncName });
+    callNative('getSafeArea', { cbFuncName });
   });
 };
 

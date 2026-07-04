@@ -1,11 +1,7 @@
 import { EventSourceParserStream } from 'eventsource-parser/stream';
 import type { ParsedEvent } from 'eventsource-parser';
-import type { TextStreamUpdate } from '@/types';
+import type { AgentSummary, RetrievalSource, TextStreamUpdate } from '@/types';
 
-/**
- * 将 OpenAI 兼容的 SSE 响应流转换为 async generator
- * 参考自 Open WebUI: src/lib/apis/streaming/index.ts
- */
 export async function createOpenAITextStream(
   responseBody: ReadableStream<Uint8Array>,
   splitLargeDeltas = false
@@ -20,6 +16,72 @@ export async function createOpenAITextStream(
     iterator = streamLargeDeltasAsRandomChunks(iterator);
   }
   return iterator;
+}
+
+/**
+ * Ollama /api/chat 返回 NDJSON 格式（每行一个 JSON），不是 SSE
+ */
+export async function createOllamaTextStream(
+  responseBody: ReadableStream<Uint8Array>
+): Promise<AsyncGenerator<TextStreamUpdate>> {
+  const reader = responseBody
+    .pipeThrough(new TextDecoderStream() as unknown as TransformStream<Uint8Array, string>)
+    .getReader();
+
+  return ollamaStreamToIterator(reader);
+}
+
+async function* ollamaStreamToIterator(
+  reader: ReadableStreamDefaultReader<string>
+): AsyncGenerator<TextStreamUpdate> {
+  let buffer = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      if (buffer.trim()) {
+        const update = parseOllamaLine(buffer.trim());
+        if (update) yield update;
+      }
+      yield { done: true, value: '' };
+      break;
+    }
+
+    buffer += value;
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const update = parseOllamaLine(trimmed);
+      if (update) {
+        yield update;
+        if (update.done) return;
+      }
+    }
+  }
+}
+
+function parseOllamaLine(line: string): TextStreamUpdate | null {
+  try {
+    const parsed = JSON.parse(line);
+
+    if (parsed.error) {
+      return { done: true, value: '', error: parsed.error };
+    }
+
+    const content = parsed.message?.content ?? '';
+    const isDone = parsed.done === true;
+
+    if (isDone) {
+      return { done: true, value: content };
+    }
+
+    return { done: false, value: content };
+  } catch {
+    return null;
+  }
 }
 
 async function* openAIStreamToIterator(
@@ -54,17 +116,25 @@ async function* openAIStreamToIterator(
 
       const delta = parsed.choices?.[0]?.delta?.content ?? '';
       const finishReason = parsed.choices?.[0]?.finish_reason;
+      const agent = isAgentSummary(parsed.agent) ? parsed.agent : undefined;
+      const sources = Array.isArray(parsed.sources) ? (parsed.sources as RetrievalSource[]) : undefined;
 
       if (finishReason === 'stop') {
-        yield { done: true, value: delta };
+        yield { done: true, value: delta, agent, sources };
         break;
       }
 
-      yield { done: false, value: delta };
+      yield { done: false, value: delta, agent, sources };
     } catch {
       continue;
     }
   }
+}
+
+function isAgentSummary(value: unknown): value is AgentSummary {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<AgentSummary>;
+  return typeof candidate.runId === 'string' && Array.isArray(candidate.toolCalls);
 }
 
 async function* streamLargeDeltasAsRandomChunks(

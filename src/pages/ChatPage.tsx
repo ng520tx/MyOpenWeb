@@ -6,11 +6,13 @@ import { useAppStore } from '@/stores';
 import { chatCompletion } from '@/apis/chat';
 import { createOpenAITextStream } from '@/apis/streaming';
 import { configureTTS, resetStreamTTS, feedStreamTTS, flushStreamTTS, stopTTS } from '@/utils/tts';
+import { filterThinking } from '@/utils/thinking';
+import { syncProviderConfig } from '@/apis/config';
+import { saveChat } from '@/apis/chats';
 
 export default function ChatPage() {
   const generating = useAppStore((s) => s.generating);
   const settings = useAppStore((s) => s.settings);
-  const pendingFiles = useAppStore((s) => s.pendingFiles);
   const activeConversationId = useAppStore((s) => s.activeConversationId);
   const conversations = useAppStore((s) => s.conversations);
 
@@ -18,6 +20,7 @@ export default function ChatPage() {
   const messages = activeConv?.messages ?? [];
 
   const abortRef = useRef<AbortController | null>(null);
+  const thinkingRef = useRef(false);
 
   useEffect(() => {
     configureTTS({
@@ -34,18 +37,18 @@ export default function ChatPage() {
       const store = useAppStore.getState();
       const files = store.pendingFiles.length > 0 ? [...store.pendingFiles] : undefined;
 
-      store.addMessage('user', text.trim(), files);
+      const userId = store.addMessage('user', text.trim(), files);
       store.clearPendingFiles();
 
       const aiId = store.addMessage('assistant', '');
       store.setGenerating(true);
       resetStreamTTS();
+      thinkingRef.current = false;
 
       try {
         const currentMessages = useAppStore.getState().getMessages();
+        await syncProviderConfig(settings);
         const [res, controller] = await chatCompletion({
-          baseUrl: settings.apiBaseUrl,
-          apiKey: settings.apiKey || undefined,
           model: settings.model,
           messages: currentMessages.slice(0, -1),
           systemPrompt: settings.systemPrompt,
@@ -53,6 +56,13 @@ export default function ChatPage() {
           maxTokens: settings.maxTokens,
           stream: settings.streamOutput,
           files,
+          agentEnabled: settings.agentEnabled,
+          knowledgeId: useAppStore.getState().activeKnowledgeId,
+          metadata: {
+            conversation_id: useAppStore.getState().activeConversationId,
+            user_message_id: userId,
+            assistant_message_id: aiId,
+          },
         });
 
         abortRef.current = controller;
@@ -65,16 +75,32 @@ export default function ChatPage() {
 
         if (settings.streamOutput) {
           const stream = await createOpenAITextStream(res.body);
+          let thinkBuf = '';
           for await (const update of stream) {
             if (update.error) {
               useAppStore.getState().updateMessage(aiId, { error: update.error, done: true });
               break;
             }
             if (update.value) {
-              useAppStore.getState().appendContent(aiId, update.value);
-              feedStreamTTS(update.value);
+              thinkBuf += update.value;
+              const result = filterThinking(thinkBuf, thinkingRef.current);
+              thinkingRef.current = result.inThinking;
+              thinkBuf = result.remaining;
+              if (result.output) {
+                useAppStore.getState().appendContent(aiId, result.output);
+                feedStreamTTS(result.output);
+              }
+            }
+            if (update.agent) {
+              useAppStore.getState().updateMessage(aiId, { agent: update.agent });
+            }
+            if (update.sources) {
+              useAppStore.getState().updateMessage(aiId, { sources: update.sources });
             }
             if (update.done) {
+              if (thinkBuf && !thinkingRef.current) {
+                useAppStore.getState().appendContent(aiId, thinkBuf);
+              }
               useAppStore.getState().updateMessage(aiId, { done: true });
               break;
             }
@@ -83,7 +109,7 @@ export default function ChatPage() {
         } else {
           const data = await res.json();
           const content = data.choices?.[0]?.message?.content ?? '';
-          useAppStore.getState().updateMessage(aiId, { content, done: true });
+          useAppStore.getState().updateMessage(aiId, { content, done: true, agent: data.agent, sources: data.sources });
           flushStreamTTS();
         }
       } catch (err: unknown) {
@@ -96,6 +122,14 @@ export default function ChatPage() {
       } finally {
         useAppStore.getState().setGenerating(false);
         useAppStore.getState().persistNow();
+        const activeConversation = useAppStore.getState().getActiveConversation();
+        if (activeConversation) {
+          try {
+            await saveChat(activeConversation);
+          } catch {
+            // Keep the local cache authoritative when the backend is temporarily unavailable.
+          }
+        }
         abortRef.current = null;
       }
     },

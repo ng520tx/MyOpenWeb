@@ -1,8 +1,6 @@
 import type { ChatMessage, FileAttachment } from '@/types';
 
 interface ChatCompletionOptions {
-  baseUrl: string;
-  apiKey?: string;
   model: string;
   messages: ChatMessage[];
   systemPrompt?: string;
@@ -11,6 +9,38 @@ interface ChatCompletionOptions {
   stream?: boolean;
   signal?: AbortSignal;
   files?: FileAttachment[];
+  agentEnabled?: boolean;
+  knowledgeId?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
+function buildMessageContent(text: string, files?: FileAttachment[]): string | ContentPart[] {
+  if (!files?.length) return text;
+
+  const hasImages = files.some((file) => file.isImage && file.dataUrl);
+  const textFiles = files.filter((file) => !file.isImage && file.content);
+
+  let combinedText = text;
+  if (textFiles.length > 0) {
+    const fileContext = textFiles
+      .map((file) => `--- File: ${file.name} ---\n${file.content}\n--- End ---`)
+      .join('\n\n');
+    combinedText = `${fileContext}\n\n${text}`;
+  }
+
+  if (!hasImages) return combinedText;
+
+  const parts: ContentPart[] = [{ type: 'text', text: combinedText }];
+  for (const file of files) {
+    if (file.isImage && file.dataUrl) {
+      parts.push({ type: 'image_url', image_url: { url: file.dataUrl } });
+    }
+  }
+  return parts;
 }
 
 export async function chatCompletion(
@@ -21,45 +51,35 @@ export async function chatCompletion(
     ? anySignal([opts.signal, controller.signal])
     : controller.signal;
 
-  const apiMessages: { role: string; content: string }[] = [];
-
-  if (opts.systemPrompt) {
-    apiMessages.push({ role: 'system', content: opts.systemPrompt });
-  }
-
-  for (const msg of opts.messages) {
-    if (msg.role === 'system') continue;
-
-    let content = msg.content;
-    const files = msg.files ?? (msg === opts.messages[opts.messages.length - 1] ? opts.files : undefined);
-    if (files?.length) {
-      const fileContext = files
-        .map((f) => `--- File: ${f.name} ---\n${f.content}\n--- End ---`)
-        .join('\n\n');
-      content = `${fileContext}\n\n${content}`;
-    }
-
-    apiMessages.push({ role: msg.role, content });
-  }
-
-  const body = {
+  const body: Record<string, unknown> = {
     model: opts.model,
-    messages: apiMessages,
+    messages: opts.messages.map((msg) => {
+      const files = msg === opts.messages[opts.messages.length - 1]
+        ? (msg.files ?? opts.files)
+        : msg.files;
+
+      return {
+        role: msg.role,
+        content: buildMessageContent(msg.content, files),
+      };
+    }),
     stream: opts.stream ?? true,
     temperature: opts.temperature ?? 0.7,
     max_tokens: opts.maxTokens ?? 4096,
+    system_prompt: opts.systemPrompt,
+    metadata: opts.metadata ?? {},
   };
 
-  const url = `${opts.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+  if (opts.knowledgeId) {
+    body.knowledge_id = opts.knowledgeId;
+  }
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-  if (opts.apiKey) {
-    headers['Authorization'] = `Bearer ${opts.apiKey}`;
-  }
 
-  const res = await fetch(url, {
+  const endpoint = opts.agentEnabled ? '/api/agent/completions' : '/api/chat/completions';
+  const res = await fetch(endpoint, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),

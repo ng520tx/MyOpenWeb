@@ -5,16 +5,9 @@ export interface ModelInfo {
   modified_at?: string;
 }
 
-export async function fetchModels(baseUrl: string, apiKey?: string): Promise<ModelInfo[]> {
-  const url = `${baseUrl.replace(/\/+$/, '')}/models`;
-
-  const headers: Record<string, string> = {};
-  if (apiKey) {
-    headers['Authorization'] = `Bearer ${apiKey}`;
-  }
-
+export async function fetchModels(): Promise<ModelInfo[]> {
   try {
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(5000) });
+    const res = await fetch('/api/models', { signal: AbortSignal.timeout(5000) });
     if (!res.ok) return [];
     const data = await res.json();
     const list = data.data ?? data.models ?? [];
