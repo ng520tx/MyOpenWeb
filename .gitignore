@@ -6,3 +6,9 @@ build
 *.local
 .DS_Store
 Thumbs.db
+.venv
+__pycache__
+server/data
+.specstory
+.cursor/plans
+tsconfig.tsbuildinfo
