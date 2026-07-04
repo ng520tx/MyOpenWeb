@@ -1,0 +1,40 @@
+{"query": "resource-api 要求用什么 JDK 版本？", "expect": ["OpenJDK 11"]}
+{"query": "各服务的启动顺序是什么？", "expect": ["必须按以下顺序启动"]}
+{"query": "怎么重载 Nginx 配置？", "expect": ["nginx -s reload"]}
+{"query": "resource-api 的应用日志在哪个路径？", "expect": ["/data/logs/resource-api/app.log"]}
+{"query": "应用日志保留多少天？", "expect": ["保留 30 天"]}
+{"query": "磁盘使用率超过多少会告警？", "expect": ["超过 90%"]}
+{"query": "MySQL 主从延迟的告警阈值是多少？", "expect": ["超过 60 秒"]}
+{"query": "接口 P95 响应时间超过多少算异常？", "expect": ["超过 2 秒"]}
+{"query": "数据库连接池耗尽时的处置步骤？", "expect": ["SHOW PROCESSLIST", "CannotGetJdbcConnectionException"]}
+{"query": "HikariCP 连接池最大连接数默认是多少？", "expect": ["HikariCP 最大连接数默认为 50"]}
+{"query": "MySQL 的 max_connections 当前配置是多少？", "expect": ["max_connections"]}
+{"query": "怎么定位 Redis 里的大 key？", "expect": ["--bigkeys"]}
+{"query": "资源快照缓存的 key 前缀是什么？", "expect": ["rc:snapshot:"]}
+{"query": "清理 Redis 时有什么禁止操作？", "expect": ["FLUSHALL"]}
+{"query": "资源列表接口为什么会慢？", "expect": ["pageSize 超过 200", "全表扫描"]}
+{"query": "慢接口限流的单实例阈值是多少？", "expect": ["100 QPS"]}
+{"query": "怎么查看 SSL 证书的到期时间？", "expect": ["openssl x509 -enddate"]}
+{"query": "SSL 证书由哪个团队签发？", "expect": ["安全组统一签发"]}
+{"query": "消息队列积压时先检查什么？", "expect": ["rc.resource.sync", "消费者是否在线"]}
+{"query": "RabbitMQ 管理台是哪个端口？", "expect": ["15672"]}
+{"query": "MySQL 全量备份在什么时间执行？", "expect": ["凌晨 2 点"]}
+{"query": "binlog 保留几天？", "expect": ["binlog：保留 3 天"]}
+{"query": "恢复演练多久做一次，RTO 要求是多少？", "expect": ["每季度执行一次"]}
+{"query": "发布窗口是什么时间段？", "expect": ["20:00 之后"]}
+{"query": "发布完成后需要观察多久？", "expect": ["观察 30 分钟监控大盘"]}
+{"query": "全站不可用属于几级故障，怎么上报？", "expect": ["10 分钟内电话上报"]}
+{"query": "机房级故障的应急预案是什么？", "expect": ["同城灾备", "DNS 切换"]}
+{"query": "发布时用哪个接口做健康检查？", "expect": ["/actuator/health"]}
+{"query": "程序连不上数据库一直报连接超时，可能是什么问题？", "expect": ["CannotGetJdbcConnectionException", "连接池"]}
+{"query": "缓存服务器内存快满了应该怎么处理？", "expect": ["used_memory", "--bigkeys"]}
+{"query": "开放接口用什么方式认证？令牌有效期多久？", "expect": ["X-RC-Token", "90 天"]}
+{"query": "接口限流的默认配额是多少？", "expect": ["每分钟 600 次"]}
+{"query": "触发限流会返回什么错误码？", "expect": ["42901"]}
+{"query": "创建资源接口怎么做幂等？", "expect": ["X-RC-Request-Id"]}
+{"query": "资源下线被拒绝返回 40901 是什么原因？", "expect": ["未闭环工单"]}
+{"query": "回调推送失败后的重试策略是什么？", "expect": ["1/5/30 分钟"]}
+{"query": "新人怎么申请 Git 仓库权限？", "expect": ["权限中心"]}
+{"query": "生产环境堡垒机权限怎么申请？", "expect": ["临时权限", "24 小时"]}
+{"query": "提交代码的分支和合并规范是什么？", "expect": ["squash merge"]}
+{"query": "测试环境每天的发布窗口是几点？", "expect": ["10:00 与 16:00"]}
