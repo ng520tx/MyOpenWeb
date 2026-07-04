@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -8,7 +9,13 @@ from typing import Iterator
 
 
 ROOT_DIR = Path(__file__).resolve().parent
-DATA_DIR = ROOT_DIR / "data"
+# MYOPENWEB_DATA_DIR lets Docker volumes and the eval harness relocate all
+# persisted state (SQLite + uploaded files) away from the source tree.
+DATA_DIR = (
+    Path(os.environ["MYOPENWEB_DATA_DIR"]).resolve()
+    if os.environ.get("MYOPENWEB_DATA_DIR")
+    else ROOT_DIR / "data"
+)
 DB_PATH = DATA_DIR / "myopenweb.db"
 
 
@@ -128,23 +135,63 @@ def init_db() -> None:
         )
         conn.commit()
 
+        _init_fts(conn)
+
         count = conn.execute("SELECT COUNT(*) AS count FROM app_config").fetchone()["count"]
         if count == 0:
             now = int(time.time() * 1000)
+            # First-run seeds; PROVIDER_* / EMBEDDING_MODEL envs let Docker
+            # point a fresh container at the right model service.
             defaults = {
-                "provider_type": "ollama",
-                "provider_base_url": "http://localhost:11434/v1",
-                "provider_api_key": "",
-                "embedding_model": "bge-m3",
+                "provider_type": os.environ.get("PROVIDER_TYPE", "ollama"),
+                "provider_base_url": os.environ.get(
+                    "PROVIDER_BASE_URL", "http://localhost:11434/v1"
+                ),
+                "provider_api_key": os.environ.get("PROVIDER_API_KEY", ""),
+                "embedding_model": os.environ.get("EMBEDDING_MODEL", "bge-m3"),
                 "ocr_enabled": "0",
                 "ocr_base_url": "http://localhost:8118",
                 "ocr_mode": "auto",
+                "retrieval_mode": "hybrid",
+                "rerank_enabled": "0",
+                "rerank_model": "BAAI/bge-reranker-base",
             }
             conn.executemany(
                 "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES (?, ?, ?)",
                 [(key, value, now) for key, value in defaults.items()],
             )
             conn.commit()
+
+
+def _init_fts(conn: sqlite3.Connection) -> None:
+    """Create the FTS5 index over chunk contents used by BM25 retrieval.
+
+    Tokenized text (CJK bigrams + latin words) is stored alongside the chunk id
+    so hybrid retrieval can join back to the chunks table. When the local
+    SQLite build lacks FTS5 the app still works in pure vector mode.
+    """
+    try:
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+                chunk_id UNINDEXED,
+                knowledge_id UNINDEXED,
+                tokens
+            )
+            """
+        )
+        conn.commit()
+    except sqlite3.OperationalError:
+        # SQLite compiled without FTS5; hybrid retrieval degrades to vector-only.
+        pass
+
+
+def fts_available() -> bool:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chunks_fts'"
+        ).fetchone()
+    return row is not None
 
 
 @contextmanager

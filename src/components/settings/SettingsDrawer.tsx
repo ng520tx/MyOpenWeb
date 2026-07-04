@@ -338,6 +338,41 @@ export default function SettingsDrawer() {
             </span>
           </Field>
 
+          <Field label="检索模式">
+            <select
+              value={settings.retrievalMode}
+              onChange={(e) => updateSettings({ retrievalMode: e.target.value === 'vector' ? 'vector' : 'hybrid' })}
+              className="input-field"
+            >
+              <option value="hybrid">混合检索（BM25 + 向量 RRF 融合）</option>
+              <option value="vector">纯向量（余弦相似度）</option>
+            </select>
+            <span className="text-xs text-neutral-500 mt-1 block leading-relaxed">
+              混合检索对术语、编号、命令类问题召回更稳。修改后点上方"保存连接配置到后端"生效，需重建索引以生成 BM25 词表。
+            </span>
+          </Field>
+
+          <Toggle
+            label="Rerank 重排序（bge-reranker）"
+            checked={settings.rerankEnabled}
+            onChange={(v) => updateSettings({ rerankEnabled: v })}
+          />
+
+          {settings.rerankEnabled && (
+            <Field label="Rerank 模型">
+              <input
+                type="text"
+                value={settings.rerankModel}
+                onChange={(e) => updateSettings({ rerankModel: e.target.value })}
+                placeholder="BAAI/bge-reranker-base"
+                className="input-field"
+              />
+              <span className="text-xs text-neutral-500 mt-1 block leading-relaxed">
+                需安装可选依赖：<code className="text-neutral-300">pip install -r server/rerank/requirements.txt</code>。未安装时自动回退为不重排。
+              </span>
+            </Field>
+          )}
+
           <Toggle
             label="OCR 文档解析（扫描件 / 表格 / 图片）"
             checked={settings.ocrEnabled}

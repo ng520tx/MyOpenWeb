@@ -9,11 +9,23 @@ interface ProviderConfigPayload {
   ocr_enabled: boolean;
   ocr_base_url: string;
   ocr_mode: ProviderConfig['ocrMode'];
+  retrieval_mode: ProviderConfig['retrievalMode'];
+  rerank_enabled: boolean;
+  rerank_model: string;
 }
 
 type ProviderSettings = Pick<
   AppSettings,
-  'providerType' | 'apiBaseUrl' | 'apiKey' | 'embeddingModel' | 'ocrEnabled' | 'ocrBaseUrl' | 'ocrMode'
+  | 'providerType'
+  | 'apiBaseUrl'
+  | 'apiKey'
+  | 'embeddingModel'
+  | 'ocrEnabled'
+  | 'ocrBaseUrl'
+  | 'ocrMode'
+  | 'retrievalMode'
+  | 'rerankEnabled'
+  | 'rerankModel'
 >;
 
 export interface ProviderVerifyResult {
@@ -41,6 +53,9 @@ function toProviderPayload(settings: ProviderSettings): ProviderConfigPayload {
     ocr_enabled: settings.ocrEnabled,
     ocr_base_url: (settings.ocrBaseUrl || 'http://localhost:8118').trim(),
     ocr_mode: settings.ocrMode,
+    retrieval_mode: settings.retrievalMode,
+    rerank_enabled: settings.rerankEnabled,
+    rerank_model: (settings.rerankModel || 'BAAI/bge-reranker-base').trim(),
   };
 }
 
@@ -53,6 +68,9 @@ function fromProviderPayload(payload: ProviderConfigPayload): ProviderConfig {
     ocrEnabled: Boolean(payload.ocr_enabled),
     ocrBaseUrl: payload.ocr_base_url || 'http://localhost:8118',
     ocrMode: payload.ocr_mode === 'always' ? 'always' : 'auto',
+    retrievalMode: payload.retrieval_mode === 'vector' ? 'vector' : 'hybrid',
+    rerankEnabled: Boolean(payload.rerank_enabled),
+    rerankModel: payload.rerank_model || 'BAAI/bge-reranker-base',
   };
 }
 

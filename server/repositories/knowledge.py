@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 import uuid
 from typing import Any
@@ -105,6 +106,7 @@ def update_knowledge(knowledge_id: str, name: str | None, description: str | Non
 
 def delete_knowledge(knowledge_id: str) -> bool:
     with get_db() as conn:
+        _fts_delete_for_knowledge(conn, knowledge_id)
         conn.execute("DELETE FROM chunks WHERE knowledge_id = ?", (knowledge_id,))
         conn.execute("DELETE FROM knowledge_file WHERE knowledge_id = ?", (knowledge_id,))
         cursor = conn.execute("DELETE FROM knowledge WHERE id = ?", (knowledge_id,))
@@ -145,6 +147,7 @@ def unbind_file(knowledge_id: str, file_id: str) -> bool:
             "DELETE FROM knowledge_file WHERE knowledge_id = ? AND file_id = ?",
             (knowledge_id, file_id),
         )
+        _fts_delete_for_file(conn, knowledge_id, file_id)
         # Drop any stale chunks belonging to the now-detached file.
         conn.execute(
             "DELETE FROM chunks WHERE knowledge_id = ? AND file_id = ?",
@@ -168,32 +171,90 @@ def list_knowledge_file_ids(knowledge_id: str) -> list[str]:
 
 # ─── chunks / index ────────────────────────────────────────
 
+def _fts_delete_for_knowledge(conn, knowledge_id: str) -> None:
+    try:
+        conn.execute("DELETE FROM chunks_fts WHERE knowledge_id = ?", (knowledge_id,))
+    except sqlite3.OperationalError:
+        pass
+
+
+def _fts_delete_for_file(conn, knowledge_id: str, file_id: str) -> None:
+    try:
+        conn.execute(
+            """
+            DELETE FROM chunks_fts WHERE chunk_id IN (
+                SELECT id FROM chunks WHERE knowledge_id = ? AND file_id = ?
+            )
+            """,
+            (knowledge_id, file_id),
+        )
+    except sqlite3.OperationalError:
+        pass
+
+
 def replace_chunks(knowledge_id: str, records: list[dict[str, Any]]) -> None:
     """Atomically swap all chunks of a knowledge base with a fresh set.
 
-    Each record: {file_id, chunk_index, content, embedding(list[float])}
+    Each record: {file_id, chunk_index, content, embedding(list[float]), tokens(str, optional)}
+    ``tokens`` feeds the FTS5 index used by BM25 hybrid retrieval.
     """
     now = _now_ms()
+    chunk_rows: list[tuple] = []
+    fts_rows: list[tuple] = []
+    for record in records:
+        chunk_id = uuid.uuid4().hex
+        chunk_rows.append(
+            (
+                chunk_id,
+                knowledge_id,
+                record["file_id"],
+                record["chunk_index"],
+                record["content"],
+                json.dumps(record["embedding"]),
+                now,
+            )
+        )
+        fts_rows.append((chunk_id, knowledge_id, record.get("tokens") or ""))
+
     with get_db() as conn:
         conn.execute("DELETE FROM chunks WHERE knowledge_id = ?", (knowledge_id,))
+        _fts_delete_for_knowledge(conn, knowledge_id)
         conn.executemany(
             """
             INSERT INTO chunks (id, knowledge_id, file_id, chunk_index, content, embedding, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            [
-                (
-                    uuid.uuid4().hex,
-                    knowledge_id,
-                    record["file_id"],
-                    record["chunk_index"],
-                    record["content"],
-                    json.dumps(record["embedding"]),
-                    now,
-                )
-                for record in records
-            ],
+            chunk_rows,
         )
+        try:
+            conn.executemany(
+                "INSERT INTO chunks_fts (chunk_id, knowledge_id, tokens) VALUES (?, ?, ?)",
+                fts_rows,
+            )
+        except sqlite3.OperationalError:
+            # SQLite without FTS5: hybrid retrieval degrades to vector-only.
+            pass
+
+
+def search_chunks_bm25(knowledge_id: str, match_query: str, limit: int = 10) -> list[str]:
+    """Return chunk ids ranked by BM25 (best first) for a prebuilt FTS5 MATCH query."""
+    if not match_query.strip():
+        return []
+    try:
+        with get_db() as conn:
+            rows = conn.execute(
+                """
+                SELECT chunk_id
+                FROM chunks_fts
+                WHERE chunks_fts MATCH ? AND knowledge_id = ?
+                ORDER BY bm25(chunks_fts)
+                LIMIT ?
+                """,
+                (match_query, knowledge_id, limit),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [row["chunk_id"] for row in rows]
 
 
 def list_chunks_for_knowledge(knowledge_id: str) -> list[dict[str, Any]]:

@@ -98,6 +98,12 @@ async def query_knowledge_base(knowledge_id: str, payload: RetrievalQuery) -> Re
         raise HTTPException(status_code=404, detail="Knowledge base not found")
     config = get_provider_config()
     chunks = await query_knowledge(
-        config, config.embedding_model, knowledge_id, payload.query, payload.top_k
+        config,
+        config.embedding_model,
+        knowledge_id,
+        payload.query,
+        payload.top_k,
+        mode=payload.mode,
+        rerank=payload.rerank,
     )
     return RetrievalResult(chunks=[RetrievalChunk(**chunk) for chunk in chunks])

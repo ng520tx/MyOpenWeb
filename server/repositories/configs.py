@@ -14,6 +14,9 @@ def get_provider_config() -> ProviderConfig:
     ocr_mode = values.get("ocr_mode") or "auto"
     if ocr_mode not in ("auto", "always"):
         ocr_mode = "auto"
+    retrieval_mode = values.get("retrieval_mode") or "hybrid"
+    if retrieval_mode not in ("vector", "hybrid"):
+        retrieval_mode = "hybrid"
     return ProviderConfig(
         provider_type=values.get("provider_type", "ollama"),
         provider_base_url=values.get("provider_base_url", "http://localhost:11434/v1"),
@@ -22,12 +25,16 @@ def get_provider_config() -> ProviderConfig:
         ocr_enabled=(values.get("ocr_enabled") or "0") == "1",
         ocr_base_url=values.get("ocr_base_url") or "http://localhost:8118",
         ocr_mode=ocr_mode,
+        retrieval_mode=retrieval_mode,
+        rerank_enabled=(values.get("rerank_enabled") or "0") == "1",
+        rerank_model=values.get("rerank_model") or "BAAI/bge-reranker-base",
     )
 
 
 def update_provider_config(config: ProviderConfig) -> ProviderConfig:
     now = int(time.time() * 1000)
     ocr_mode = config.ocr_mode if config.ocr_mode in ("auto", "always") else "auto"
+    retrieval_mode = config.retrieval_mode if config.retrieval_mode in ("vector", "hybrid") else "hybrid"
     stored = {
         "provider_type": config.provider_type,
         "provider_base_url": config.provider_base_url.strip(),
@@ -36,6 +43,9 @@ def update_provider_config(config: ProviderConfig) -> ProviderConfig:
         "ocr_enabled": "1" if config.ocr_enabled else "0",
         "ocr_base_url": (config.ocr_base_url or "http://localhost:8118").strip(),
         "ocr_mode": ocr_mode,
+        "retrieval_mode": retrieval_mode,
+        "rerank_enabled": "1" if config.rerank_enabled else "0",
+        "rerank_model": (config.rerank_model or "BAAI/bge-reranker-base").strip(),
     }
 
     with get_db() as conn:
@@ -52,4 +62,7 @@ def update_provider_config(config: ProviderConfig) -> ProviderConfig:
         ocr_enabled=config.ocr_enabled,
         ocr_base_url=stored["ocr_base_url"],
         ocr_mode=ocr_mode,
+        retrieval_mode=retrieval_mode,
+        rerank_enabled=config.rerank_enabled,
+        rerank_model=stored["rerank_model"],
     )

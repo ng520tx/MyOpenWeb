@@ -17,6 +17,7 @@ export const DEFAULT_PROVIDER_TYPE = 'ollama';
 export const DEFAULT_MODEL = 'qwen3.5:4b';
 export const DEFAULT_EMBEDDING_MODEL = 'bge-m3';
 export const DEFAULT_OCR_BASE_URL = 'http://localhost:8118';
+export const DEFAULT_RERANK_MODEL = 'BAAI/bge-reranker-base';
 export const DEFAULT_SYSTEM_PROMPT = 'You are a helpful assistant.';
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -27,6 +28,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ocrEnabled: false,
   ocrBaseUrl: DEFAULT_OCR_BASE_URL,
   ocrMode: 'auto',
+  retrievalMode: 'hybrid',
+  rerankEnabled: false,
+  rerankModel: DEFAULT_RERANK_MODEL,
   agentEnabled: false,
   model: DEFAULT_MODEL,
   systemPrompt: DEFAULT_SYSTEM_PROMPT,

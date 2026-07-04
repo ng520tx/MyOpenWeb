@@ -40,6 +40,9 @@ class BindFileRequest(BaseModel):
 class RetrievalQuery(BaseModel):
     query: str = Field(min_length=1)
     top_k: int = 4
+    # Optional overrides for A/B debugging; None falls back to app config.
+    mode: str | None = None
+    rerank: bool | None = None
 
 
 class RetrievalChunk(BaseModel):

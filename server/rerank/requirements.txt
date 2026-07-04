@@ -1,0 +1,6 @@
+# Optional rerank stage dependencies (kept out of the base backend install).
+# CPU install:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r server/rerank/requirements.txt
+# Model download mirror (China): set HF_ENDPOINT=https://hf-mirror.com
+sentence-transformers>=3.0

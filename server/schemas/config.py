@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 ProviderType = Literal["ollama", "openai"]
 OcrMode = Literal["auto", "always"]
+RetrievalMode = Literal["vector", "hybrid"]
 
 
 class ProviderConfig(BaseModel):
@@ -18,6 +19,13 @@ class ProviderConfig(BaseModel):
     ocr_enabled: bool = False
     ocr_base_url: str = "http://localhost:8118"
     ocr_mode: OcrMode = "auto"
+    # Retrieval strategy: pure vector cosine, or hybrid (BM25 via SQLite FTS5
+    # fused with vector ranks through Reciprocal Rank Fusion).
+    retrieval_mode: RetrievalMode = "hybrid"
+    # Optional cross-encoder rerank stage (bge-reranker). Heavy deps are lazily
+    # imported; when unavailable retrieval silently falls back to fused order.
+    rerank_enabled: bool = False
+    rerank_model: str = "BAAI/bge-reranker-base"
 
 
 class ProviderVerifyResult(BaseModel):

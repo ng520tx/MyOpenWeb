@@ -9,15 +9,20 @@ from server.repositories.knowledge import (
     list_chunks_for_knowledge,
     list_knowledge_file_ids,
     replace_chunks,
+    search_chunks_bm25,
 )
 from server.schemas.config import ProviderConfig
 from server.services.embeddings import embed_query, embed_texts
+from server.services.rerank import rerank_chunks
+from server.services.tokenize import build_match_query, tokenize_for_bm25
 
 
 CHUNK_SIZE = 600
 CHUNK_OVERLAP = 100
 EMBED_BATCH = 16
 SOURCE_PREVIEW_LENGTH = 200
+# Reciprocal Rank Fusion constant; 60 is the conventional default from the paper.
+RRF_K = 60
 # Boundary characters we prefer to break a chunk on, ordered by priority.
 _BREAK_CHARS = ("\n\n", "\n", "。", "！", "？", ". ", "! ", "? ", "；", "; ")
 
@@ -66,14 +71,20 @@ def split_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
     return chunks
 
 
-async def index_knowledge(config: ProviderConfig, embedding_model: str, knowledge_id: str) -> dict[str, Any]:
+async def index_knowledge(
+    config: ProviderConfig,
+    embedding_model: str,
+    knowledge_id: str,
+    chunk_size: int = CHUNK_SIZE,
+    overlap: int = CHUNK_OVERLAP,
+) -> dict[str, Any]:
     """Re-chunk and re-embed every file bound to a knowledge base."""
     file_ids = list_knowledge_file_ids(knowledge_id)
 
     pending: list[tuple[str, int, str]] = []  # (file_id, chunk_index, content)
     for file_id in file_ids:
         text = get_file_text(file_id) or ""
-        for index, chunk in enumerate(split_text(text)):
+        for index, chunk in enumerate(split_text(text, chunk_size, overlap)):
             pending.append((file_id, index, chunk))
 
     if not pending:
@@ -92,6 +103,7 @@ async def index_knowledge(config: ProviderConfig, embedding_model: str, knowledg
             "chunk_index": chunk_index,
             "content": content,
             "embedding": embedding,
+            "tokens": tokenize_for_bm25(content),
         }
         for (file_id, chunk_index, content), embedding in zip(pending, embeddings)
     ]
@@ -105,11 +117,22 @@ async def query_knowledge(
     knowledge_id: str,
     query: str,
     top_k: int = 4,
+    mode: str | None = None,
+    rerank: bool | None = None,
 ) -> list[dict[str, Any]]:
-    """Return the most relevant chunks for a query via cosine similarity."""
+    """Return the most relevant chunks for a query.
+
+    Pipeline: vector cosine ranking → optional BM25 (SQLite FTS5) fused via
+    Reciprocal Rank Fusion → optional cross-encoder rerank. ``mode`` and
+    ``rerank`` override the persisted config (used by the debug endpoint and
+    the eval harness for A/B comparisons).
+    """
     rows = list_chunks_for_knowledge(knowledge_id)
     if not rows or not query.strip():
         return []
+
+    retrieval_mode = mode if mode in ("vector", "hybrid") else config.retrieval_mode
+    use_rerank = config.rerank_enabled if rerank is None else rerank
 
     query_vec = await embed_query(config, embedding_model, query)
     if not query_vec:
@@ -130,23 +153,60 @@ async def query_knowledge(
     denom[denom == 0] = 1e-9
     scores = (matrix @ q) / denom
 
-    top_count = max(1, min(top_k, len(usable)))
-    top_indices = np.argsort(-scores)[:top_count]
+    # Pull a wider candidate pool than top_k so fusion/rerank has room to work.
+    pool_size = max(top_k * 3, 10)
+    vector_order = [int(i) for i in np.argsort(-scores)[: min(pool_size, len(usable))]]
 
-    results: list[dict[str, Any]] = []
-    for idx in top_indices:
-        row = usable[int(idx)]
-        results.append(
-            {
-                "chunk_id": row["id"],
-                "file_id": row["file_id"],
-                "filename": row["filename"],
-                "chunk_index": row["chunk_index"],
-                "content": row["content"],
-                "score": float(scores[int(idx)]),
-            }
-        )
-    return results
+    if retrieval_mode == "hybrid":
+        candidates = _fuse_rrf(usable, scores, vector_order, knowledge_id, query, pool_size)
+    else:
+        candidates = [
+            _chunk_result(usable[idx], float(scores[idx])) for idx in vector_order
+        ]
+
+    if use_rerank and candidates:
+        reranked = await rerank_chunks(config.rerank_model, query, candidates)
+        if reranked is not None:
+            candidates = reranked
+
+    return candidates[: max(1, top_k)]
+
+
+def _chunk_result(row: dict[str, Any], score: float) -> dict[str, Any]:
+    return {
+        "chunk_id": row["id"],
+        "file_id": row["file_id"],
+        "filename": row["filename"],
+        "chunk_index": row["chunk_index"],
+        "content": row["content"],
+        "score": score,
+    }
+
+
+def _fuse_rrf(
+    usable: list[dict[str, Any]],
+    scores: Any,
+    vector_order: list[int],
+    knowledge_id: str,
+    query: str,
+    pool_size: int,
+) -> list[dict[str, Any]]:
+    """Merge vector and BM25 rankings with Reciprocal Rank Fusion."""
+    by_id = {row["id"]: row for row in usable}
+
+    rrf_scores: dict[str, float] = {}
+    for rank, idx in enumerate(vector_order):
+        chunk_id = usable[idx]["id"]
+        rrf_scores[chunk_id] = rrf_scores.get(chunk_id, 0.0) + 1.0 / (RRF_K + rank + 1)
+
+    bm25_ids = search_chunks_bm25(knowledge_id, build_match_query(query), pool_size)
+    for rank, chunk_id in enumerate(bm25_ids):
+        if chunk_id not in by_id:
+            continue  # stale FTS row or dimension-filtered chunk
+        rrf_scores[chunk_id] = rrf_scores.get(chunk_id, 0.0) + 1.0 / (RRF_K + rank + 1)
+
+    ordered_ids = sorted(rrf_scores, key=lambda cid: -rrf_scores[cid])
+    return [_chunk_result(by_id[cid], rrf_scores[cid]) for cid in ordered_ids[:pool_size]]
 
 
 # ─── chat integration helpers ──────────────────────────────

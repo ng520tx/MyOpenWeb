@@ -87,6 +87,7 @@ export interface ModelConfig {
 }
 
 export type OcrMode = 'auto' | 'always';
+export type RetrievalMode = 'vector' | 'hybrid';
 
 export interface AppSettings {
   providerType: ProviderType;
@@ -96,6 +97,9 @@ export interface AppSettings {
   ocrEnabled: boolean;
   ocrBaseUrl: string;
   ocrMode: OcrMode;
+  retrievalMode: RetrievalMode;
+  rerankEnabled: boolean;
+  rerankModel: string;
   agentEnabled: boolean;
   model: string;
   systemPrompt: string;
@@ -115,6 +119,9 @@ export interface ProviderConfig {
   ocrEnabled: boolean;
   ocrBaseUrl: string;
   ocrMode: OcrMode;
+  retrievalMode: RetrievalMode;
+  rerankEnabled: boolean;
+  rerankModel: string;
 }
 
 export interface FileRecord {
