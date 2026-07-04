@@ -1,0 +1,55 @@
+from __future__ import annotations
+
+import time
+
+from server.db import get_db
+from server.schemas.config import ProviderConfig
+
+
+def get_provider_config() -> ProviderConfig:
+    with get_db() as conn:
+        rows = conn.execute("SELECT key, value FROM app_config").fetchall()
+
+    values = {row["key"]: row["value"] for row in rows}
+    ocr_mode = values.get("ocr_mode") or "auto"
+    if ocr_mode not in ("auto", "always"):
+        ocr_mode = "auto"
+    return ProviderConfig(
+        provider_type=values.get("provider_type", "ollama"),
+        provider_base_url=values.get("provider_base_url", "http://localhost:11434/v1"),
+        provider_api_key=values.get("provider_api_key", ""),
+        embedding_model=values.get("embedding_model") or "bge-m3",
+        ocr_enabled=(values.get("ocr_enabled") or "0") == "1",
+        ocr_base_url=values.get("ocr_base_url") or "http://localhost:8118",
+        ocr_mode=ocr_mode,
+    )
+
+
+def update_provider_config(config: ProviderConfig) -> ProviderConfig:
+    now = int(time.time() * 1000)
+    ocr_mode = config.ocr_mode if config.ocr_mode in ("auto", "always") else "auto"
+    stored = {
+        "provider_type": config.provider_type,
+        "provider_base_url": config.provider_base_url.strip(),
+        "provider_api_key": config.provider_api_key.strip(),
+        "embedding_model": (config.embedding_model or "bge-m3").strip(),
+        "ocr_enabled": "1" if config.ocr_enabled else "0",
+        "ocr_base_url": (config.ocr_base_url or "http://localhost:8118").strip(),
+        "ocr_mode": ocr_mode,
+    }
+
+    with get_db() as conn:
+        conn.executemany(
+            "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES (?, ?, ?)",
+            [(key, value, now) for key, value in stored.items()],
+        )
+
+    return ProviderConfig(
+        provider_type=config.provider_type,
+        provider_base_url=stored["provider_base_url"],
+        provider_api_key=stored["provider_api_key"],
+        embedding_model=stored["embedding_model"],
+        ocr_enabled=config.ocr_enabled,
+        ocr_base_url=stored["ocr_base_url"],
+        ocr_mode=ocr_mode,
+    )
