@@ -244,7 +244,11 @@ Agent 模式 + knowledge_id → agent_runner
    - 点「Git diff 摘要」，贴入一段 diff → 得到变更文件、增删行、风险点。
    - 展开「Agent 调用工具」查看本轮调用过程。
 5. RAG × Agent 融合（约 40s，**Agent 模式 + 选中知识库**）：问库内问题 → 展示 Agent 自主调用 `search_knowledge`、回答带「引用来源」，并能展开看工具调用；再问一个库外问题，展示同样会拒答（已统一两条路径的拒答行为）。
-6. 收尾（约 20s）：一句架构小结（移动端壳 + H5 流式 + FastAPI 分层 + 自研 RAG + 工具型 Agent + 多模型）+ 强调"全自研、零额外服务、可私有部署"。
+6. Docker 部署收尾（约 30s）：
+   - 切到终端（仓库根目录），敲 `docker compose up -d --build` → 等它输出 `Container ... Started`（如果之前构建过，几秒就完成；录制前可先 `docker compose down` 让这条命令有过程感）。
+   - 敲 `curl http://localhost:8000/api/health` 显示 `{"ok":true}`，浏览器打开 `http://localhost:8000` 展示同一个应用已经在容器里跑起来。
+   - 口播："整套应用一条 docker compose up 就能部署到企业内网，前端构建、后端服务打进同一个镜像，数据落在独立数据卷里。"
+7. 架构小结（约 20s）：一句话（移动端壳 + H5 流式 + FastAPI 分层 + 自研 RAG + 工具型 Agent + 多模型）+ 强调"全自研、零额外服务、可私有部署"。
 
 #### 旁白可直接念的关键句
 
