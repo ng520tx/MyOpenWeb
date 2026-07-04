@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from server.db import init_db
 from server.routers import (
@@ -15,6 +18,9 @@ from server.routers import (
     memories,
     models,
 )
+
+
+WEB_DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
 
 
 def create_app() -> FastAPI:
@@ -38,6 +44,11 @@ def create_app() -> FastAPI:
     app.include_router(memories.router)
     app.include_router(files.router)
     app.include_router(knowledge.router)
+
+    # Serve the built H5 when present (single-container deploy); API routes
+    # above take precedence, everything else falls through to the SPA.
+    if WEB_DIST_DIR.exists():
+        app.mount("/", StaticFiles(directory=WEB_DIST_DIR, html=True), name="web")
     return app
 
 

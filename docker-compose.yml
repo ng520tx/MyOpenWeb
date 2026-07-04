@@ -1,0 +1,36 @@
+services:
+  myopenweb:
+    build: .
+    image: myopenweb:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - myopenweb-data:/data
+    environment:
+      # First-run seeds; afterwards edit in the app's settings drawer.
+      # Host Ollama (default): http://host.docker.internal:11434/v1
+      # Compose-managed Ollama: PROVIDER_BASE_URL=http://ollama:11434/v1
+      - PROVIDER_TYPE=${PROVIDER_TYPE:-ollama}
+      - PROVIDER_BASE_URL=${PROVIDER_BASE_URL:-http://host.docker.internal:11434/v1}
+      - PROVIDER_API_KEY=${PROVIDER_API_KEY:-}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-bge-m3}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # Optional in-compose Ollama:
+  #   PROVIDER_BASE_URL=http://ollama:11434/v1 docker compose --profile ollama up -d
+  #   docker compose exec ollama ollama pull qwen3.5:4b
+  #   docker compose exec ollama ollama pull bge-m3
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  myopenweb-data:
+  ollama-models:
