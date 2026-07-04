@@ -1,0 +1,39 @@
+diff --git a/src/main/resources/application-prod.yml b/src/main/resources/application-prod.yml
+index 3f8a2c1..9d4e7b2 100644
+--- a/src/main/resources/application-prod.yml
++++ b/src/main/resources/application-prod.yml
+@@ -12,9 +12,9 @@ spring:
+   datasource:
+     url: jdbc:mysql://rc-mysql-master:3306/resource_center?useSSL=false
+     hikari:
+-      maximum-pool-size: 50
+-      connection-timeout: 30000
++      maximum-pool-size: 100
++      connection-timeout: 10000
+       idle-timeout: 600000
+       max-lifetime: 1800000
+diff --git a/src/main/java/com/boco/rc/service/ResourceService.java b/src/main/java/com/boco/rc/service/ResourceService.java
+index a1b2c3d..e4f5a6b 100644
+--- a/src/main/java/com/boco/rc/service/ResourceService.java
++++ b/src/main/java/com/boco/rc/service/ResourceService.java
+@@ -118,7 +118,11 @@ public class ResourceService {
+     public List<ResourceVO> listResources(ResourceQuery query) {
+-        return resourceMapper.selectByStatus(query.getStatus());
++        int pageSize = Math.min(query.getPageSize(), 200);
++        query.setPageSize(pageSize);
++        PageHelper.startPage(query.getPageNo(), pageSize);
++        return resourceMapper.selectByStatusPaged(query);
+     }
+ 
+     public ResourceDetailVO getDetail(String resourceId) {
+diff --git a/src/main/java/com/boco/rc/dao/ResourceMapper.java b/src/main/java/com/boco/rc/dao/ResourceMapper.java
+index 7c8d9e0..b1a2c3f 100644
+--- a/src/main/java/com/boco/rc/dao/ResourceMapper.java
++++ b/src/main/java/com/boco/rc/dao/ResourceMapper.java
+@@ -55,6 +55,8 @@ public interface ResourceMapper {
+     List<ResourceVO> selectByStatus(@Param("status") String status);
+ 
++    List<ResourceVO> selectByStatusPaged(ResourceQuery query);
++
+     ResourceDetailVO selectDetailById(@Param("resourceId") String resourceId);
+ }

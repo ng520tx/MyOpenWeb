@@ -1,0 +1,21 @@
+2026-07-03 20:41:02.315 INFO  [http-nio-8080-exec-12] c.b.rc.api.ResourceController - query resources page=1 pageSize=500 userId=u10086
+2026-07-03 20:41:05.882 WARN  [http-nio-8080-exec-12] c.b.rc.dao.ResourceMapper - slow sql cost=3521ms sql=SELECT * FROM rc_resource WHERE status = ? ORDER BY update_time DESC
+2026-07-03 20:41:08.104 ERROR [http-nio-8080-exec-12] c.b.rc.api.GlobalExceptionHandler - request failed uri=/api/v2/resources
+org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection; nested exception is java.sql.SQLTransientConnectionException: HikariPool-1 - Connection is not available, request timed out after 30000ms.
+	at org.springframework.jdbc.datasource.DataSourceUtils.getConnection(DataSourceUtils.java:82)
+	at org.springframework.jdbc.core.JdbcTemplate.execute(JdbcTemplate.java:376)
+	at com.boco.rc.dao.ResourceMapper.selectByStatus(ResourceMapper.java:58)
+	at com.boco.rc.service.ResourceService.listResources(ResourceService.java:121)
+	at com.boco.rc.api.ResourceController.queryResources(ResourceController.java:66)
+Caused by: java.sql.SQLTransientConnectionException: HikariPool-1 - Connection is not available, request timed out after 30000ms.
+	at com.zaxxer.hikari.pool.HikariPool.createTimeoutException(HikariPool.java:696)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:197)
+	... 4 common frames omitted
+2026-07-03 20:41:08.221 ERROR [http-nio-8080-exec-18] c.b.rc.api.GlobalExceptionHandler - request failed uri=/api/v2/resources
+org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection; nested exception is java.sql.SQLTransientConnectionException: HikariPool-1 - Connection is not available, request timed out after 30000ms.
+2026-07-03 20:41:09.008 WARN  [HikariPool-1 housekeeper] com.zaxxer.hikari.pool.HikariPool - HikariPool-1 - Thread starvation or clock leap detected (housekeeper delta=52s).
+2026-07-03 20:41:12.450 ERROR [http-nio-8080-exec-03] c.b.rc.api.GlobalExceptionHandler - request failed uri=/api/v2/resources/detail
+java.util.concurrent.TimeoutException: null
+	at java.base/java.util.concurrent.CompletableFuture.timedGet(CompletableFuture.java:1886)
+	at com.boco.rc.service.SnapshotService.loadSnapshot(SnapshotService.java:87)
+2026-07-03 20:41:15.019 INFO  [scheduling-1] c.b.rc.job.ResourceSyncJob - sync job skipped, previous round still running
