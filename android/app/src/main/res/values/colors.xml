@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="boco_bg_dark">#FF171717</color>
+    <color name="boco_status_bar">#FF171717</color>
+    <color name="boco_nav_bar">#FF171717</color>
+</resources>
