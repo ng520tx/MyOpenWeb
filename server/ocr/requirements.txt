@@ -1,0 +1,15 @@
+# OCR 文档解析服务（PaddleOCR / PP-StructureV3）专用依赖。
+# 重要：请安装到“独立的 venv”，不要装进主后端 server/requirements.txt 的环境，
+# 以免 paddle 的重依赖拖慢后端启动或产生版本冲突。
+#
+# CPU 版 PaddlePaddle（当前环境无 GPU）。若日后换 NVIDIA GPU，请改装对应的
+# CUDA wheel，见 https://www.paddlepaddle.org.cn/install/quick
+paddlepaddle
+
+# PaddleOCR 3.x 内含 PP-StructureV3 文档解析管线与服务化能力。
+paddleocr>=3.1
+
+# 服务化（HTTP serving）依赖。若 `paddlex --serve` 提示缺依赖，可执行：
+#   python -m pip install "paddlex[serving]"
+# 或参考 PaddleX 文档的 serving 安装指引。
+paddlex[serving]
