@@ -225,8 +225,12 @@ def write_report(
         )
     lines += [
         "",
-        "说明：Hit@K 为宽松召回率（gold 以关键串匹配近似），横向对比不同参数与检索模式仍然有效；",
+        "说明：",
+        "",
+        "- Hit@K 为宽松召回率（gold 以关键串匹配近似），横向对比不同参数与检索模式仍然有效；"
         "严格人工标注集可在数据规模上来后替换 `is_relevant` 判定。",
+        "- rerank 行的耗时为 CPU 推理（CrossEncoder 对候选池逐对打分）。CPU 场景适合质量优先/离线链路；"
+        "在线低延迟场景建议 GPU、ONNX 量化或缩小候选池。",
         "",
     ]
     out_path.write_text("\n".join(lines), encoding="utf-8")

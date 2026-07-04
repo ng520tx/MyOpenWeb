@@ -5,13 +5,14 @@
 
 ## 1. 能力总览
 
-把原本的「本地聊天骨架」补齐成可作为求职作品的「企业研发/运维 AI Copilot 工作台」，新增三块自研能力：
+把原本的「本地聊天骨架」补齐成可作为求职作品的「企业研发/运维 AI Copilot 工作台」，新增自研能力：
 
 1. 文件落盘 + 文本抽取：上传 txt/md/pdf/docx/图片，后端抽取纯文本并落盘（PDF/扫描件/图片可选走 PaddleOCR），独立 `files` 表。
-2. RAG 知识库：建库 → 挂文件 → 切片向量化 → 提问时余弦 topK 召回 → 带引用回答 → 库外问题拒答。
+2. RAG 知识库：建库 → 挂文件 → 切片向量化 → 混合检索（向量余弦 + BM25 经 RRF 融合，可选 bge-reranker 重排）→ 带引用回答 → 库外问题拒答。
 3. 研发/运维 Agent 工具：日志分析、Git diff 摘要、工单总结、测试用例生成，并能让 Agent 自己决定调用 `search_knowledge` 查知识库。
+4. 检索质量评测：自建 40 条 QA 评测集，Hit@K / MRR / 延迟跨参数对照（见第 7 节）。
 
-全程自研、零额外服务部署（向量直接存 SQLite，内存余弦检索），便于面试讲清底层，也便于小规模私有部署。
+全程自研、零额外服务部署（向量直接存 SQLite，BM25 用 SQLite 内置 FTS5，内存余弦检索），便于面试讲清底层，也便于小规模私有部署。
 
 ## 2. 架构
 
@@ -63,6 +64,9 @@ flowchart TD
 ### 关键设计取舍
 
 - 向量存 SQLite：`chunks.embedding` 存 JSON 数组，查询时用 numpy 内存余弦相似度。个人/演示规模足够，省去额外向量库部署。
+- BM25 用 SQLite FTS5：零新增服务。中文分词用自研 CJK 二元组 + 英文小写单词（`services/tokenize.py`），解决 unicode61 分词器把整段中文当一个 token 的问题；索引和查询走同一分词器保证匹配一致。
+- 混合检索用 RRF：向量排名与 BM25 排名按 `1/(60+rank)` 融合，天然免调权重、对分数尺度不敏感；候选池取 `max(top_k*3, 10)` 给融合与重排留空间。
+- rerank 可降级：cross-encoder（bge-reranker）依赖单独放 `server/rerank/requirements.txt`，未安装或模型加载失败时负缓存 + 自动回退融合排序，核心链路不因 rerank 阻塞。
 - 不用 Dify：RAG 与 Agent 都自研，面试更好讲底层；Dify 仅作为后期可选编排 provider 的扩展点。
 - 普通聊天 vs Agent 两条 RAG 路径：
   - 关闭 Agent + 选了知识库 → `/api/chat/completions`，后端直接检索并把片段注入 system_prompt（确定性强）。
@@ -97,11 +101,16 @@ flowchart TD
 ```text
 聊天带 knowledge_id → chat_proxy
 → rag.retrieve_for_chat()：取最后一条用户消息为 query
-→ query_knowledge()：向量化 query + numpy 余弦 topK
+→ query_knowledge()：
+   1) 向量化 query，numpy 余弦得到向量排名
+   2) hybrid 模式再取 BM25（FTS5）排名，RRF 融合
+   3) 开启 rerank 时对候选池做 cross-encoder 重排（失败自动回退）
 → 命中：拼"带 [序号] 来源标注的参考资料"system_prompt + 返回 sources
 → 未命中：注入拒答提示
 → 流式响应前先 emit 一条 {"sources":[...]} SSE，前端展示"引用来源"
 ```
+
+检索模式与 rerank 在「设置 → 知识库 / RAG」配置；`POST /api/knowledge/{id}/query` 支持 `mode` / `rerank` 覆盖参数做 A/B 调试。切换 hybrid 后需重建索引以生成 BM25 词表。
 
 ### 3.4 Agent 调用知识库
 
@@ -169,11 +178,11 @@ Agent 模式 + knowledge_id → agent_runner
 
 **项目段落（精简版，适合一行项目栏）**：
 
-> 企业研发/运维 AI Copilot 工作台（独立设计与实现）：Android 原生壳 + React H5 流式聊天 + 自研 RAG 知识库 + 工具型 Agent，FastAPI 分层后端、多模型适配，可企业内网私有部署，用于知识问答、运维排障与研发提效。
+> 企业研发/运维 AI Copilot 工作台（独立设计与实现）：Android 原生壳 + React H5 流式聊天 + 自研 RAG 知识库（混合检索 + rerank + 自建评测）+ 工具型 Agent，FastAPI 分层后端、多模型适配、Docker 一键私有化部署，用于知识问答、运维排障与研发提效。
 
 **项目段落（完整版，可直接粘贴）**：
 
-> 独立设计并实现「企业研发/运维 AI Copilot 工作台」：Android 原生壳 + React H5 流式聊天 + WebView 桥接（语音输入/播报、文件选择、安全区），FastAPI 本地后端分层（routers/services/repositories/schemas），统一 OpenAI SSE，接入 Ollama / OpenAI Compatible 多模型。自研 RAG 知识库（文件落盘与 txt/md/pdf/docx 文本抽取、切片、向量化、SQLite 存向量、numpy 余弦 topK 检索、引用来源标注、库外问题拒答）；实现研发/运维 Agent 工具（日志分析、Git diff 摘要、工单总结、测试用例生成）并与 RAG 融合（Agent 自主调用 `search_knowledge`，全过程写入运行日志）。可用于企业内网智能问答、运维排障与研发提效。
+> 独立设计并实现「企业研发/运维 AI Copilot 工作台」：Android 原生壳 + React H5 流式聊天 + WebView 桥接（语音输入/播报、文件选择、安全区），FastAPI 本地后端分层（routers/services/repositories/schemas），统一 OpenAI SSE，接入 Ollama / OpenAI Compatible 多模型。自研 RAG 全链路：文件落盘与 txt/md/pdf/docx/扫描件（PaddleOCR）文本抽取、切片、向量化、混合检索（BM25+向量 RRF 融合，自研中文分词适配 SQLite FTS5）、可选 bge-reranker 重排、引用来源标注、库外问题拒答；自建 40 条 QA 评测集量化调优（混合检索使 Hit@1 提升 11pp 至 0.93，rerank 后 MRR 达 1.00）。实现研发/运维 Agent 工具（日志分析、Git diff 摘要、工单总结、测试用例生成）并与 RAG 融合（Agent 自主调用 `search_knowledge`，全过程写入运行日志）。pytest 单测 + GitHub Actions CI + Docker 多阶段构建一键私有化部署。
 
 **如何结合你的真实经历讲（重要，别写成通用项目）**：
 
@@ -186,8 +195,12 @@ Agent 模式 + knowledge_id → agent_runner
 
 ### 6.2 面试话术（高频问题）
 
-- **整体架构一句话**：移动端（Android 壳 + React H5 流式）→ FastAPI 分层后端（routers/services/repositories/schemas，统一 OpenAI SSE）→ 自研 RAG + 工具型 Agent → 多模型（Ollama / OpenAI Compatible），数据全落 SQLite，可私有部署。
-- **RAG 是怎么实现的？**：文本抽取 → 按字符 + 自然边界 + overlap 切片 → embedding 批量向量化入库（SQLite 存 JSON 向量）→ 查询时把 query 向量化后用 numpy 算余弦相似度取 topK → 把命中片段带 `[序号]` 来源拼进 system_prompt → 让模型只依据资料回答，未命中则拒答。
+- **整体架构一句话**：移动端（Android 壳 + React H5 流式）→ FastAPI 分层后端（routers/services/repositories/schemas，统一 OpenAI SSE）→ 自研 RAG（混合检索 + rerank + 评测）+ 工具型 Agent → 多模型（Ollama / OpenAI Compatible），数据全落 SQLite，Docker 一键私有部署。
+- **RAG 是怎么实现的？**：文本抽取 → 按字符 + 自然边界 + overlap 切片 → embedding 批量向量化入库（SQLite 存 JSON 向量）→ 查询时向量余弦排名，hybrid 模式再融合 BM25（FTS5）排名（RRF），可选 cross-encoder 重排 → 把命中片段带 `[序号]` 来源拼进 system_prompt → 让模型只依据资料回答，未命中则拒答。
+- **混合检索为什么用 RRF 而不是加权分数？**：向量余弦和 BM25 分数量纲不同，直接加权要调参且对分布敏感；RRF 只用排名（`1/(60+rank)`），免调权、稳健，是业界常用融合方式。实测比纯向量 Hit@1 提升 8~11pp。
+- **中文 BM25 怎么处理分词？**：SQLite FTS5 的 unicode61 会把整段中文当一个 token。自研轻量分词（CJK 字符二元组 + 英文小写词），索引与查询同一分词器，零依赖；规模大再换 jieba。
+- **Rerank 为什么有用？代价是什么？**：召回阶段（双塔/BM25）是"各自编码再比较"，rerank 用 cross-encoder 对"问题-片段"拼接后整体打分，捕捉细粒度交互，所以首位命中显著提升（实测 Hit@1 0.93→1.00）。代价是每个候选都要过一遍模型，CPU 上单次检索到 5s 量级，因此做成可开关 + 失败自动回退，在线低延迟场景建议 GPU/ONNX/缩小候选池。
+- **检索质量怎么评的？**：自建 40 条 QA 评测集（三份企业文档语料），指标 Hit@1/4/8 与 MRR，另测端到端检索延迟（含查询向量化）；跑 chunk_size × 检索模式 × rerank 全参数对照，报告落盘可复现（`server/eval/`）。
 - **为什么不用向量数据库 / Dify？**：个人/演示规模 SQLite + 内存余弦足够，且能讲清每一步；强调"自己写的"比"拖流程"更有说服力。架构上预留了 PostgreSQL + pgvector 与 Dify provider 扩展点，规模上来按接口替换实现即可。
 - **怎么防幻觉 / 保证可信？**：强约束 system_prompt（只用参考资料、未命中明确说不知道）、返回引用来源给前端展示、embedding 维度不匹配时拒绝用旧索引并提示重建。
 - **Agent 和普通 RAG 的区别？**：普通 RAG 是后端确定性检索后注入 system_prompt（结果稳定、好复现）；Agent 把检索做成 `search_knowledge` 工具，由模型自主决定是否检索、检索什么，并记录工具调用日志，更接近"智能体"。两种路径按场景选用。
@@ -208,14 +221,16 @@ Agent 模式 + knowledge_id → agent_runner
 
 > 重要：演示「严格拒答」用普通模式（关闭 Agent），库外问题会干净拒答；演示「智能体」再开 Agent 模式。
 > 知识库内容建议：岗位定位是研发/运维 Copilot，演示时最好用「运维手册 / 接口文档 / 故障案例」做知识库更贴合；现有「药品手册」可作为第二个垂直案例。下面脚本两种内容都适用，括号里给出基于现有药品库的示例问法。
+> 现成素材（`examples/` 目录，可直接上传/粘贴）：`ops-manual.md` 运维手册 + `api-reference.md` 接口文档 + `faq-onboarding.md` 新人 FAQ 建知识库；`error.log` 演示日志分析；`sample.diff` 演示 Git diff 摘要。库内问题可直接用 `server/eval/dataset.jsonl` 里的问法（如"数据库连接池耗尽时的处置步骤？"）。
 
 #### 录制前检查清单（30 秒过一遍）
 
 - [ ] 后端 8000 / 前端已启动，`/api/health` 返回 `{"ok":true}`
 - [ ] 设置里 Provider 已连通、模型已选好、Embedding 模型=`bge-m3`，已点过「保存连接配置到后端」
-- [ ] 目标知识库已「建立/重建索引」，列表显示分块数（如 193）
+- [ ] 检索模式确认（默认混合检索；如要演示 rerank 需先装 `server/rerank/requirements.txt` 依赖）
+- [ ] 目标知识库已「建立/重建索引」，列表显示分块数
 - [ ] 新建一个干净对话，避免历史串味
-- [ ] 准备好 2 段素材：一段异常日志、一段 git diff（贴进输入框即可）
+- [ ] 准备好 2 段素材：`examples/error.log`、`examples/sample.diff`（贴进输入框即可）
 
 #### 分镜脚本
 
@@ -236,8 +251,28 @@ Agent 模式 + knowledge_id → agent_runner
 - "检索命中时回答带可点击的引用来源；问知识库以外的问题会直接拒答，避免幻觉。"
 - "Agent 模式下，检索被封装成 `search_knowledge` 工具，由模型自己决定何时查、查什么，整个调用过程有日志可回溯。"
 - "整套 RAG 和 Agent 都是自研的，向量直接存 SQLite、用 numpy 算余弦相似度，不依赖外部向量库或编排平台，方便企业内网私有部署。"
+- "检索走混合链路：BM25 关键词加向量语义经 RRF 融合，再可选 bge-reranker 重排；我自建了 40 条 QA 的评测集，混合检索比纯向量首位命中提升 11 个百分点。"
 
-## 7. OCR 文档解析（PP-StructureV3）
+## 7. 检索质量评测
+
+评测材料在 `server/eval/`：`dataset.jsonl` 40 条 QA（覆盖运维手册、接口文档、新人 FAQ 三份演示语料 `examples/*.md`），`run_eval.py` 跑 chunk_size × 检索模式 × rerank 的全参数对照，输出 Hit@1/4/8、MRR、平均与 P95 检索延迟。
+
+运行（后端 venv + Ollama bge-m3 就绪后）：
+
+```bash
+MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
+# 数据沙箱在 server/eval/.data，不污染正式库；报告写入 server/eval/results.md
+```
+
+最近一次实测结论（CPU 环境，完整表见 `server/eval/results.md`）：
+
+- 混合检索比纯向量的 Hit@1 提升 8~11 个百分点（命令、编号、术语类问题受益最大），延迟仅增加约 50ms。
+- rerank（bge-reranker-base）把 chunk_size=600 的 Hit@1 从 0.93 拉到 1.00，但 CPU 推理让单次检索到 5s 量级——质量优先场景可开，在线低延迟场景建议 GPU / ONNX / 缩小候选池。
+- chunk_size 400/600/800 中，600 在该语料上是质量与块数的平衡点。
+
+面试可讲的点：评测集怎么建、Hit@K 与 MRR 怎么算、RRF 为什么免调权、rerank 的收益与代价、为什么中文 BM25 需要自己分词。
+
+## 8. OCR 文档解析（PP-StructureV3）
 
 针对扫描件/图片型 PDF、复杂表格、印章等 `pypdf` 抽不出内容的场景，新增一条可选的 OCR 解析通道。
 
@@ -263,9 +298,16 @@ Agent 模式 + knowledge_id → agent_runner
 2. 设置里开启“OCR 文档解析”，填服务地址与模式，保存到后端。
 3. 新上传的 PDF/图片会按模式自动走 OCR；**已上传的文件**可在知识库文件列表点“重新抽取”，随后再“建立 / 重建索引”即可让旧文件用上 OCR 文本。
 
-## 8. 后续扩展预案（仅方案，未实现）
+## 9. Docker 部署
 
-- **Docker 一键部署**：多阶段构建前端静态资源 + FastAPI，`docker-compose` 编排后端与（可选）Ollama；数据卷挂载 `server/data`。
+- `Dockerfile` 多阶段构建：Node 18 + pnpm 构建 H5 → python:3.12-slim 运行 FastAPI 并托管 `dist/`（`server/main.py` 在 dist 存在时挂载 StaticFiles，API 路由优先）。
+- 数据目录用环境变量 `MYOPENWEB_DATA_DIR=/data` 重定向到卷 `myopenweb-data`；首次启动可用 `PROVIDER_TYPE` / `PROVIDER_BASE_URL` / `PROVIDER_API_KEY` / `EMBEDDING_MODEL` 播种配置（之后以设置页保存的为准）。
+- `docker-compose.yml`：默认连宿主机 Ollama（`host.docker.internal`，Linux 用 `extra_hosts: host-gateway`）；`--profile ollama` 可把 Ollama 一起编排（此时 `PROVIDER_BASE_URL=http://ollama:11434/v1`）。
+- 用法见 README「Docker 一键部署」。OCR 与 rerank 属可选重依赖，不进主镜像。
+
+## 10. 后续扩展预案（仅方案，未实现）
+
 - **PostgreSQL + pgvector 迁移**：把 `chunks.embedding` 改为 `vector` 列，检索改为 SQL `ORDER BY embedding <=> :q LIMIT k`；`repositories` 层接口不变，替换实现即可，便于写"企业级"简历。
-- **检索增强**：加入 rerank（如 bge-reranker）、BM25 + 向量混合检索、按文件增量索引。
+- **按文件增量索引**：当前为知识库整体重建，规模大后改为按文件维度增量更新 chunks 与 FTS。
+- **Agent 中间过程流式推送**：把工具调用事件实时 SSE 给前端（参考 Open WebUI 事件流），而非最终一次性输出。
 - **Dify 作为可选编排 provider**：把 Dify 作为一种 provider 接入，复杂工作流交给 Dify，简单场景仍走自研链路。

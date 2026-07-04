@@ -11,9 +11,11 @@
 - SQLite 对话/配置/Agent 日志/记忆/文件/知识库持久化
 - 原生 STT/TTS/文件桥接
 - Ollama / OpenAI Compatible 模型接入
-- 文件落盘 + 文本抽取（txt/md/pdf/docx）
-- 自研 RAG 知识库（切片 + 向量化 + 余弦 topK + 引用来源 + 无答案拒答）
+- 文件落盘 + 文本抽取（txt/md/pdf/docx，可选 PaddleOCR）
+- 自研 RAG 知识库（切片 + 向量化 + 混合检索 BM25/向量 RRF 融合 + 可选 bge-reranker 重排 + 引用来源 + 无答案拒答）
+- 检索质量评测（40 条 QA，Hit@K / MRR / 延迟参数对照，`server/eval/`）
 - 研发/运维 Agent 工具（日志分析、Git diff 摘要、工单总结、测试用例生成、知识库检索）
+- pytest 单元测试 + GitHub Actions CI + Docker 一键部署
 
 当前阶段的目标不是做成 Dify 那样的工作流平台，而是把 RAG 知识库和真实研发/运维 Agent 工具全部自研落地，便于面试讲清底层。RAG / Agent 功能模块的产品化说明见 `docs/rag-agent-copilot.md`。
 
@@ -31,7 +33,10 @@
 | 流式解析 | eventsource-parser | 1.x |
 | 本地后端 | FastAPI | 0.136.x |
 | 后端语言 | Python | 3.12.x |
-| 数据库 | SQLite | Python 内置 sqlite3 |
+| 数据库 | SQLite | Python 内置 sqlite3（向量存 JSON，BM25 用 FTS5） |
+| Rerank（可选） | sentence-transformers CrossEncoder | bge-reranker-base |
+| 测试 / CI | pytest + GitHub Actions | 见 `.github/workflows/ci.yml` |
+| 部署 | Docker 多阶段构建 + docker-compose | 见 `Dockerfile` |
 | Android | Kotlin + WebView | API 26+ |
 | 包管理 | pnpm | 10.x |
 | Node | Node.js | 18.18.0（见 `.nvmrc`） |
@@ -532,6 +537,11 @@ pnpm server
 - [x] 聊天选知识库：命中片段注入 system_prompt，带引用来源，库外问题拒答
 - [x] RAG × Agent 融合：`search_knowledge` 工具 + 运行日志记录 + 引用来源
 - [x] 设置页可配置 embedding 模型，前端知识库管理抽屉 + 引用来源展示
+- [x] 混合检索：SQLite FTS5 BM25 + 向量余弦经 RRF 融合，自研 CJK 二元组分词，设置页可切换
+- [x] Rerank：bge-reranker cross-encoder 可开关重排，依赖缺失自动回退（`server/rerank/`）
+- [x] 检索质量评测：40 条 QA 评测集 + Hit@K/MRR/延迟参数对照报告（`server/eval/`）
+- [x] 后端单元测试（切片/分词/Agent JSON 解析/混合检索）+ GitHub Actions CI
+- [x] Docker 多阶段构建 + docker-compose（可选 Ollama profile），FastAPI 托管 H5
 - [x] Ollama 图片请求自动切到原生 `/api/chat`
 - [x] Ollama NDJSON 在后端转换为 OpenAI SSE
 - [x] localStorage 与 SQLite 的启动合并同步
