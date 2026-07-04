@@ -2,260 +2,737 @@
 
 ## 项目定位
 
-基于 Open WebUI 拆解的个人版 AI App 骨架。  
-H5 聊天页 + Android WebView 壳 + 原生桥接 + 语音输入输出 + Ollama/OpenAI API 接入。
+基于 Open WebUI 拆解的个人版 AI App 骨架，目标是做成「企业研发/运维 AI Copilot 工作台」的求职作品。  
+当前架构已经从“前端直连模型服务”升级为：
+
+- React H5 聊天页
+- Android WebView 壳
+- FastAPI 本地后端
+- SQLite 对话/配置/Agent 日志/记忆/文件/知识库持久化
+- 原生 STT/TTS/文件桥接
+- Ollama / OpenAI Compatible 模型接入
+- 文件落盘 + 文本抽取（txt/md/pdf/docx）
+- 自研 RAG 知识库（切片 + 向量化 + 余弦 topK + 引用来源 + 无答案拒答）
+- 研发/运维 Agent 工具（日志分析、Git diff 摘要、工单总结、测试用例生成、知识库检索）
+
+当前阶段的目标不是做成 Dify 那样的工作流平台，而是把 RAG 知识库和真实研发/运维 Agent 工具全部自研落地，便于面试讲清底层。RAG / Agent 功能模块的产品化说明见 `docs/rag-agent-copilot.md`。
 
 ## 技术栈
 
 | 层级 | 技术 | 版本 |
 |------|------|------|
-| 构建 | Vite | 5.x |
-| 框架 | React | 18.x |
-| 语言 | TypeScript | 5.x |
+| 前端构建 | Vite | 5.x |
+| 前端框架 | React | 18.x |
+| 前端语言 | TypeScript | 5.x |
 | 样式 | Tailwind CSS | 3.x |
 | 状态管理 | Zustand | 4.x |
 | Markdown | react-markdown + remark-gfm | 9.x |
-| 代码高亮 | react-syntax-highlighter (hljs Light) | 16.x |
-| SSE 解析 | eventsource-parser | 1.x |
+| 代码高亮 | react-syntax-highlighter | 16.x |
+| 流式解析 | eventsource-parser | 1.x |
+| 本地后端 | FastAPI | 0.136.x |
+| 后端语言 | Python | 3.12.x |
+| 数据库 | SQLite | Python 内置 sqlite3 |
+| Android | Kotlin + WebView | API 26+ |
 | 包管理 | pnpm | 10.x |
-| Node | Node.js | 18.18.0（见 .nvmrc） |
+| Node | Node.js | 18.18.0（见 `.nvmrc`） |
 
 ## 目录结构
 
-```
+```text
 MyOpenWeb/
-├── docs/                              # 项目文档
-│   ├── project-architecture.md        # 本文件
-│   └── fnm-node-version-management.md # fnm 版本管理指南
+├── docs/
+│   ├── project-architecture.md
+│   ├── troubleshooting.md
+│   └── fnm-node-version-management.md
+├── server/
+│   ├── data/                    # SQLite 数据目录（运行后生成）
+│   ├── repositories/            # SQLite 读写层
+│   ├── routers/                 # FastAPI 路由
+│   ├── schemas/                 # Pydantic 模型
+│   ├── services/                # Provider 代理与协议转换
+│   ├── db.py                    # SQLite 初始化与连接
+│   ├── main.py                  # FastAPI 应用入口
+│   └── requirements.txt         # Python 依赖
 ├── src/
-│   ├── apis/                          # API 接口层
-│   │   ├── chat.ts                    # chatCompletion() - 对接 Ollama/OpenAI 兼容 API
-│   │   ├── models.ts                  # fetchModels() - 自动获取模型列表
-│   │   └── streaming.ts              # createOpenAITextStream() - SSE 流式解析
-│   ├── bridge/                        # Android WebView 桥接
-│   │   └── moaBridge.ts              # moaBridge 接口（STT/TTS/文件/导航/安全区域）
+│   ├── apis/
+│   │   ├── chat.ts              # 统一走本地后端 /api/chat/completions
+│   │   ├── chats.ts             # SQLite 对话同步接口
+│   │   ├── config.ts            # Provider 配置同步接口
+│   │   ├── models.ts            # 通过本地后端获取模型列表
+│   │   └── streaming.ts         # SSE / NDJSON 解析工具
+│   ├── bridge/
+│   │   └── moaBridge.ts         # Android WebView 桥接
 │   ├── components/
-│   │   ├── chat/                      # 聊天组件集
-│   │   │   ├── ChatNavbar.tsx         # 顶栏：侧边栏入口 + App名称 + 模型名 + 新对话 + 设置
-│   │   │   ├── ChatPlaceholder.tsx    # 空状态占位页
-│   │   │   ├── CodeBlock.tsx          # 代码块：语法高亮 + 复制按钮
-│   │   │   ├── FileButton.tsx         # 文件附件按钮（读取文本文件内容）
-│   │   │   ├── FilePreviews.tsx       # 文件预览条（输入框上方）
-│   │   │   ├── MessageBubble.tsx      # 消息气泡（用户/AI，AI 支持 Markdown + 代码高亮 + GFM 表格）
-│   │   │   ├── MessageInput.tsx       # 输入区：文本框 + 语音 + 文件 + 发送/停止
-│   │   │   ├── MessageList.tsx        # 消息列表（自动滚动）
-│   │   │   └── VoiceButton.tsx        # 语音输入（Web Speech API + moaBridge 预留）
+│   │   ├── chat/
 │   │   ├── settings/
-│   │   │   └── SettingsDrawer.tsx     # 设置抽屉（右侧滑入）
 │   │   └── sidebar/
-│   │       └── Sidebar.tsx            # 对话列表侧边栏（左侧滑入）
 │   ├── constants/
-│   │   └── index.ts                   # 默认配置、存储 Key、文件限制
 │   ├── pages/
-│   │   └── ChatPage.tsx               # 聊天页主入口，串联所有组件 + 流式交互 + TTS
 │   ├── stores/
-│   │   └── index.ts                   # Zustand 状态管理（多对话 + 设置 + 持久化）
 │   ├── types/
-│   │   ├── index.ts                   # 核心类型（ChatMessage, Conversation, AppSettings 等）
-│   │   └── speech.d.ts                # Web Speech API 类型声明
 │   ├── utils/
-│   │   └── tts.ts                     # TTS 工具（流式分句朗读 speechSynthesis）
-│   ├── App.tsx                        # 应用根组件（挂载 Sidebar + SettingsDrawer）
-│   ├── main.tsx                       # 入口
-│   ├── index.css                      # Tailwind + 全局样式 + 安全区域 + 滑入动画
-│   └── vite-env.d.ts                  # Vite 类型引用
-├── .gitignore
-├── .nvmrc                             # Node 版本锁定 (18.18.0)
-├── index.html                         # HTML 入口（viewport 手机适配）
+│   ├── App.tsx
+│   ├── main.tsx
+│   └── index.css
+├── android/
+│   └── app/src/main/java/com/myopenweb/app/
+│       ├── MainActivity.kt
+│       ├── WebViewContainer.kt
+│       ├── bridge/MoaBridge.kt
+│       ├── native_/NativeSTT.kt
+│       ├── native_/NativeTTS.kt
+│       ├── native_/NativeFilePicker.kt
+│       └── native_/SafeAreaHelper.kt
 ├── package.json
-├── pnpm-lock.yaml
-├── postcss.config.js
-├── tailwind.config.js                 # Tailwind 配置（自定义 neutral-750 + primary 色板）
-├── tsconfig.json
-├── tsconfig.node.json
-└── vite.config.ts                     # Vite 配置（@ 路径别名）
+├── vite.config.ts               # /api 代理到 8000
+└── .nvmrc
+```
+
+## 总体架构
+
+```text
+H5 Frontend (React)
+  ├─ UI: Chat / Sidebar / Settings
+  ├─ State: Zustand + localStorage cache
+  ├─ Bridge: STT / TTS / File / SafeArea
+  └─ API: /api/models /api/chat/completions /api/agent/completions /api/chats /api/config/provider
+                │
+                ▼
+Local Backend (FastAPI)
+  ├─ Config Router: Provider + embedding 配置读写
+  ├─ Provider Verify: 连接自检与模型探测
+  ├─ Models Router: 模型列表代理
+  ├─ Chat Router: 聊天代理，统一输出 OpenAI SSE；可选 knowledge_id 触发 RAG 注入
+  ├─ Agent Router: 工具调用循环（含 search_knowledge）
+  ├─ Chats Router: SQLite 对话存取
+  ├─ Files Router: 上传/列表/详情/删除，文本抽取后落盘
+  ├─ Knowledge Router: 知识库 CRUD、绑定文件、建立索引、调试检索
+  ├─ RAG Service: 切片 + 批量向量化 + 余弦 topK + 引用来源/拒答
+  ├─ Embeddings Service: Ollama /api/embed 与 OpenAI /embeddings（含 WSL 回退）
+  └─ Provider Service
+       ├─ Ollama /v1 兼容接口
+       ├─ Ollama /api/chat 原生图片接口
+       └─ OpenAI Compatible 接口
+                │
+                ▼
+SQLite (server/data/myopenweb.db)
+  ├─ app_config           # 含 embedding_model
+  ├─ chats
+  ├─ agent_runs
+  ├─ agent_steps
+  ├─ memories
+  ├─ files                # 文件元数据 + 抽取文本
+  ├─ knowledge            # 知识库
+  ├─ knowledge_file       # 知识库↔文件 多对多
+  └─ chunks               # 切片 + embedding(JSON)
+
+文件本体落盘到 server/data/files/
 ```
 
 ## 核心数据流
 
+### 1. 聊天请求
+
+```text
+用户输入
+→ MessageInput.onSend(text)
+→ ChatPage.handleSend()
+→ store.addMessage('user', text, files)
+→ store.addMessage('assistant', '')
+→ syncProviderConfig(settings)
+→ POST /api/chat/completions
+→ FastAPI 根据 provider 配置选择真实模型服务
+   ├─ Ollama：统一转发原生 /api/chat，并转换成 OpenAI SSE / 标准 completion JSON
+   └─ OpenAI Compatible：转发 /chat/completions
+→ 前端统一用 createOpenAITextStream() 解析
+→ appendContent(aiId, delta)
+→ feedStreamTTS(delta)
+→ 完成后 persistNow()
+→ saveChat(activeConversation)
 ```
-用户输入 → MessageInput.onSend(text)
-         → ChatPage.handleSend()
-           → useAppStore.addMessage('user', text, files?)
-           → useAppStore.addMessage('assistant', '')
-           → chatCompletion({ baseUrl, apiKey, model, messages, files, stream: true })
-             → fetch POST /chat/completions
-           → createOpenAITextStream(response.body)
-             → SSE EventSourceParser 逐 token 解析
-           → for await (update of stream)
-             → useAppStore.appendContent(aiId, update.value)  [不触发持久化]
-             → feedStreamTTS(update.value)  [TTS 流式朗读]
-             → MessageList 自动滚动
-         → 完成后 updateMessage(aiId, { done: true })
-         → persistNow()  [统一写入 localStorage]
-         → flushStreamTTS()  [朗读剩余文本]
+
+### 2. Provider 配置
+
+```text
+SettingsDrawer 修改 providerType / apiBaseUrl / apiKey
+→ 保存到 localStorage
+→ 用户点击“保存连接配置到后端”或模型刷新/聊天发送时触发 syncProviderConfig()
+→ PUT /api/config/provider
+→ SQLite.app_config 持久化
+```
+
+### 3. 对话同步
+
+```text
+App 启动
+→ fetchProviderConfig()
+→ fetchChats()
+→ 本地 localStorage 与 SQLite 做按 updatedAt 合并
+→ 以较新的版本为准回写到前端 Store
+→ 本地较新的记录再回传 SQLite
 ```
 
 ## 模块说明
 
-### 1. API 层 (src/apis/)
+### 1. 前端 API 层 (`src/apis/`)
 
-- **chat.ts** - `chatCompletion()` 函数，发送 OpenAI 兼容格式的请求，返回 `[Response, AbortController]`。支持 stream/非 stream 两种模式，支持 API Key，支持文件 context 注入。可对接 Ollama（默认 `localhost:11434/v1`）和任何 OpenAI 兼容 API。
-- **streaming.ts** - `createOpenAITextStream()` 函数，将 SSE 响应流转为 async generator。移植自 Open WebUI 的 `src/lib/apis/streaming/index.ts`，核心链路：`ReadableStream → TextDecoderStream → EventSourceParserStream → yield { value, done }`。
-- **models.ts** - `fetchModels()` 函数，调用 `GET /v1/models` 获取已安装的模型列表。兼容 Ollama 和 OpenAI 格式响应，5s 超时。
+- `chat.ts`
+  - 不再直连第三方模型服务，只请求本地后端 `/api/chat/completions`
+  - 保留文件和图片消息的 OpenAI content-part 组装逻辑
+- `config.ts`
+  - `fetchProviderConfig()`：读取后端保存的 provider 配置
+  - `syncProviderConfig()`：把当前设置同步给后端
+- `chats.ts`
+  - `fetchChats()` / `saveChat()` / `removeChat()`
+  - 把本地对话缓存和 SQLite 连接起来
+- `models.ts`
+  - 统一请求 `/api/models`
+  - 由后端代为访问真实 provider
+- `streaming.ts`
+  - `createOpenAITextStream()` 现在是主路径
+  - `createOllamaTextStream()` 保留为兼容工具
 
-### 2. 状态管理 (src/stores/)
+### 2. 本地后端 (`server/`)
 
-使用 Zustand，单一 `useAppStore` 包含：
-- `conversations: Conversation[]` - 所有对话列表
-- `activeConversationId: string | null` - 当前激活对话
-- `generating: boolean` - 是否正在生成
-- `settings: AppSettings` - 用户设置（API 地址、API Key、模型、温度、TTS 等）
-- `pendingFiles: FileAttachment[]` - 待发送文件附件
-- `sidebarOpen / settingsOpen` - UI 抽屉状态
+- `main.py`
+  - 初始化 SQLite
+  - 注册 CORS
+  - 挂载全部路由
+- `db.py`
+  - 初始化 `app_config` 与 `chats` 两张表
+  - 默认 provider 配置为 Ollama
+- `routers/config.py`
+  - `GET /api/config/provider`
+  - `PUT /api/config/provider`
+  - `POST /api/config/provider/verify`
+    - 检测当前 provider 是否可连接
+    - 返回配置地址、实际访问地址、模型数量、模型列表、错误信息
+- `routers/models.py`
+  - `GET /api/models`
+- `routers/chat_proxy.py`
+  - `POST /api/chat/completions`
+  - 统一返回 OpenAI SSE，前端只维护一种流解析逻辑
+- `routers/agent.py`
+  - `POST /api/agent/completions`
+  - Agent v1 入口，复用同一套聊天请求结构
+  - 当前只开放后端白名单工具，不允许模型执行任意命令
+  - `GET /api/agent/runs/{run_id}` 查询一次 Agent 运行详情
+- `routers/memories.py`
+  - `GET /api/memories`
+  - `POST /api/memories`
+  - `PUT /api/memories/{id}`
+  - `DELETE /api/memories/{id}`
+  - 管理手动长期记忆，Agent 请求时自动注入启用记忆
+- `routers/chats.py`
+  - `GET /api/chats`
+  - `PUT /api/chats/{id}`
+  - `DELETE /api/chats/{id}`
+- `services/providers.py`
+  - OpenAI Compatible 转发
+  - Ollama 原生 `/api/chat` 转发
+  - Ollama NDJSON → OpenAI SSE 协议转换
+  - WSL 下自动尝试 `localhost` 和 Windows 主机网关地址，避免 Ollama 运行在 Windows 时本地后端连不上
+- `services/agent_tools.py`
+  - `get_current_time`：返回服务器当前时间
+  - `calculator`：安全解析四则运算表达式，不使用 `eval`
+  - `analyze_log`：正则抽取日志级别统计、错误行、异常类型，交模型归纳根因与排查建议
+  - `summarize_git_diff`：解析 unified diff 的变更文件与增删行数，交模型生成变更摘要与风险点
+  - `summarize_ticket`：抽取工单号/@相关人/链接/字段并给出摘要骨架
+  - `generate_test_cases`：给出测试覆盖维度与关键参数，交模型生成结构化用例
+  - `search_knowledge`：仅在选定知识库时开放，由 `agent_runner` 异步调用 `services/rag.py` 检索
+- `services/file_extract.py`
+  - txt/md 等文本直读，pdf 用 `pypdf`，docx 用 `python-docx`，缺依赖时报清晰错误而不崩溃
+- `services/embeddings.py`
+  - 批量向量化，复用 `providers.py` 的 URL 解析与 WSL 回退
+- `services/rag.py`
+  - 切片（按字符 + 自然边界 + overlap）、批量入库、查询时 numpy 余弦 topK
+  - 维度不匹配（换了 embedding 模型）时返回空并提示重建索引
+  - 聊天融合：拼接带来源标注的参考资料 system_prompt，未命中时走拒答提示
+- `services/agent_runner.py`
+  - 要求模型输出 Open WebUI 风格的 `tool_calls` 数组
+  - 兼容小模型把工具名直接写进 `action` 字段的情况
+  - 根据模型决策调用白名单工具
+  - 把工具结果回填给模型生成最终回答
+  - 最多执行 3 轮工具循环，避免无限调用
+  - 写入 `agent_runs` / `agent_steps`，记录模型判断、工具调用、工具结果、最终回答
+  - 注入已启用 `memories` 作为长期上下文
 
-**持久化策略**：
-- 设置 → `localStorage['mow-settings']`，变更时立即写入
-- 对话列表 → `localStorage['mow-conversations']`，发送用户消息时写入，流式输出期间不写入（避免每 token 写一次），流式完成后通过 `persistNow()` 统一写入
-- 文件内容 → 持久化时剥离（只保留文件名/大小/类型），避免 localStorage 爆满
-- 当前对话 ID → `localStorage['mow-active-id']`
+### 3. 状态管理 (`src/stores/`)
 
-### 3. 聊天组件 (src/components/chat/)
+使用单一 `useAppStore` 管理：
 
-三层布局：
-- **ChatNavbar** - 固定顶栏：左侧汉堡图标打开侧边栏，显示 App 名称和当前模型，右侧新对话按钮 + 设置齿轮图标
-- **MessageList** - 可滚动消息区，智能自动滚动（用户手动上滑时暂停）
-- **MessageInput** - 固定底栏，包含文本输入、语音按钮、文件按钮、发送/停止按钮。上方显示文件预览条（FilePreviews）
+- `conversations`
+- `activeConversationId`
+- `generating`
+- `settings`
+- `pendingFiles`
+- `sidebarOpen`
+- `settingsOpen`
 
-消息渲染：
-- 用户消息 → 右对齐蓝色气泡，附件显示为文件标签
-- AI 消息 → 左对齐，通过 react-markdown 渲染：
-  - 代码块 → CodeBlock 组件（react-syntax-highlighter 语法高亮 + 语言标签 + 复制按钮）
-  - 表格 → remark-gfm 解析 + 自定义样式（带边框、表头高亮）
-  - 行内代码 → 灰底圆角样式
-- 错误消息 → 红色提示框
+持久化策略：
 
-支持高亮的语言：JavaScript/TypeScript/JSX/TSX、Python、Java、JSON、Bash/Shell、SQL、CSS、HTML/XML、Markdown、Go、Rust、C/C++、YAML
+- 设置先写 `localStorage`
+- Provider 配置再同步到 SQLite
+- 对话先写 `localStorage`
+- 流结束后同步到 SQLite
+- 文件内容在本地持久化时仍然剥离，避免 localStorage 膨胀
 
-### 4. 设置面板 (src/components/settings/)
+### 4. 设置面板 (`src/components/settings/SettingsDrawer.tsx`)
 
-- **SettingsDrawer** - 右侧滑入抽屉，配置项：
-  - API 地址、API Key
-  - 模型选择：打开时自动调用 `fetchModels()` 获取模型列表，下拉选择；如获取失败则回退为手动输入；支持刷新按钮
-  - 系统提示词（文本区域）
-  - 温度、最大 Tokens（滑块）
-  - 流式输出开关
-  - TTS 自动朗读开关、朗读语言、朗读速度
+当前设置分成两类：
 
-### 5. 多对话管理 (src/components/sidebar/)
+- Provider 连接配置
+  - `providerType`
+  - `apiBaseUrl`
+  - `apiKey`
+  - 可手动保存到后端
+  - 可点击“测试连接”检查 provider 是否可访问
+- Agent 配置
+  - `agentEnabled`
+  - 开启后聊天请求走 `/api/agent/completions`
+  - 关闭后保持普通聊天代理路径
+- 聊天运行参数
+  - `model`
+  - `systemPrompt`
+  - `temperature`
+  - `maxTokens`
+  - `streamOutput`
+  - `ttsEnabled / ttsLang / ttsRate`
 
-- **Sidebar** - 左侧滑入侧边栏：
-  - 新建对话按钮
-  - 对话列表（按创建时间倒序），点击切换
-  - hover 显示删除按钮
-  - 对话标题自动取首条用户消息前 30 字
-  - 底部设置入口
+### 5. 对话与侧边栏 (`src/components/sidebar/Sidebar.tsx`)
 
-### 6. 文件上传 (FileButton + FilePreviews)
+- 支持新建、切换、删除
+- 按标题和内容搜索
+- Markdown / JSON 导出
+- 删除时会同时删除 SQLite 中的记录
 
-- 支持 .txt/.md/.json/.csv/.py/.js/.ts 等常见文本格式，限制 5MB
-- 选择后在输入框上方显示文件预览条，可单独移除
-- 发送时文件内容以 `--- File: xxx ---\ncontent\n--- End ---` 格式拼接到消息中
+### 6. 文件与图片消息
 
-### 7. TTS 流式播放 (src/utils/tts.ts)
+- 浏览器环境：`<input type="file">`
+- Android WebView：优先走原生 `pickFile()`
+- 文本文件：
+  - 作为上下文拼接进消息文本
+- 图片文件：
+  - 作为 OpenAI content-part 的 `image_url`
+  - 对于 Ollama，后端统一走原生 `/api/chat`
 
-- 基于 `speechSynthesis` API
-- 流式分句朗读：按句子边界（。！？.!?\n）切分，一句完整后立即提交朗读
-- 设置里可配置：语言（中/英/日）、速度（0.5x-2.0x）
-- 停止生成时同时停止朗读
+### 7. TTS / STT
 
-### 8. Android 桥接 (src/bridge/)
+- TTS：仍使用浏览器 `speechSynthesis`
+- STT：
+  - 浏览器优先尝试 `SpeechRecognition`
+  - Android WebView 回退到原生 `NativeSTT`
 
-遵循项目已有的 moaBridge 模式，预定义接口：
-- **STT**: `startSTT()` / `stopSTT()` - 语音识别
-- **TTS**: `playTTS()` / `stopTTS()` - 语音合成
-- **文件**: `pickFile()` - 文件选择
-- **导航**: `goBack()` / `setTitle()` - 页面导航
-- **安全区域**: `getSafeArea()` - 获取状态栏/底部栏高度
+### 8. Android Bridge
 
-所有带回调的接口统一使用 `cbFuncName + window[cbFuncName]` 模式，与 Android 原生通过 `callNative` 通信。
+桥接接口：
 
-### 9. 移动端适配
+- `startSTT()` / `stopSTT()`
+- `playTTS()` / `stopTTS()`
+- `pickFile()`
+- `goBack()`
+- `setTitle()`
+- `getSafeArea()`
 
-- `index.html` viewport: `width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover`
-- CSS 变量 `--safe-area-top` / `--safe-area-bottom` 适配刘海屏
-- 按钮/导航禁用 user-select，聊天区域允许选中复制
-- 不使用响应式布局，全部按手机尺寸设计
+本轮修正：
+
+- H5 端统一通过 `JSON.stringify(params)` 调 `callNative()`
+- Android 权限回调已回接到 `NativeSTT.onPermissionResult()`
+- WebView 容器暴露 `getBridge()` 供 Activity 权限回调使用
+
+## 数据库设计
+
+### `app_config`
+
+| 字段 | 说明 |
+|------|------|
+| `key` | 配置键 |
+| `value` | 配置值 |
+| `updated_at` | 更新时间 |
+
+当前使用的键：
+
+- `provider_type`
+- `provider_base_url`
+- `provider_api_key`
+- `embedding_model`（知识库向量化模型，默认 `bge-m3`）
+
+### `chats`
+
+| 字段 | 说明 |
+|------|------|
+| `id` | 对话 ID |
+| `title` | 对话标题 |
+| `payload` | 完整对话 JSON |
+| `created_at` | 创建时间 |
+| `updated_at` | 更新时间 |
+
+设计原则：
+
+- 当前阶段优先简单可靠，不拆 message/file 多表
+- 先把“能稳定同步和恢复”做好
+- 后续若要做检索、附件复用、消息级索引，再拆分表结构
+
+### `agent_runs`
+
+| 字段 | 说明 |
+|------|------|
+| `id` | Agent 运行 ID |
+| `conversation_id` | 关联对话 ID |
+| `message_id` | 关联 assistant 消息 ID |
+| `user_message_id` | 关联 user 消息 ID |
+| `model` | 使用的模型 |
+| `user_input` | 用户输入 |
+| `final_answer` | 最终回答 |
+| `created_at` | 创建时间 |
+| `updated_at` | 更新时间 |
+
+### `agent_steps`
+
+| 字段 | 说明 |
+|------|------|
+| `id` | 步骤 ID |
+| `run_id` | 关联 Agent 运行 ID |
+| `step_index` | 步骤序号 |
+| `type` | `model_decision` / `tool_call` / `tool_result` / `final` |
+| `name` | 工具名或步骤名 |
+| `input_json` | 输入 JSON |
+| `output_json` | 输出 JSON |
+| `ok` | 是否成功 |
+| `error` | 错误信息 |
+| `created_at` | 创建时间 |
+
+### `memories`
+
+| 字段 | 说明 |
+|------|------|
+| `id` | Memory ID |
+| `content` | 记忆内容 |
+| `category` | `preference` / `profile` / `project` / `fact` |
+| `enabled` | 是否注入 Agent |
+| `created_at` | 创建时间 |
+| `updated_at` | 更新时间 |
+
+### `files`
+
+| 字段 | 说明 |
+|------|------|
+| `id` | 文件 ID |
+| `filename` | 原始文件名 |
+| `path` | 落盘路径（server/data/files/） |
+| `mime_type` | MIME 类型 |
+| `size` | 字节大小 |
+| `hash` | 内容 SHA-256 |
+| `text_content` | 抽取出的纯文本 |
+| `meta_json` | 预留元数据 |
+| `created_at` / `updated_at` | 时间戳 |
+
+### `knowledge`
+
+| 字段 | 说明 |
+|------|------|
+| `id` | 知识库 ID |
+| `name` | 知识库名称 |
+| `description` | 描述 |
+| `created_at` / `updated_at` | 时间戳 |
+
+### `knowledge_file`
+
+| 字段 | 说明 |
+|------|------|
+| `knowledge_id` | 知识库 ID |
+| `file_id` | 文件 ID |
+| `created_at` | 绑定时间 |
+
+知识库与文件多对多，主键 `(knowledge_id, file_id)`。
+
+### `chunks`
+
+| 字段 | 说明 |
+|------|------|
+| `id` | 分块 ID |
+| `knowledge_id` | 所属知识库 |
+| `file_id` | 来源文件 |
+| `chunk_index` | 分块序号 |
+| `content` | 分块文本 |
+| `embedding` | 向量（JSON 数组字符串） |
+| `created_at` | 创建时间 |
+
+设计原则：个人/演示规模直接把向量存进 SQLite，查询时用 numpy 内存余弦相似度即可；企业级再迁 PostgreSQL + pgvector。
 
 ## 默认配置
 
 | 配置项 | 默认值 |
 |--------|--------|
-| API 地址 | `http://localhost:11434/v1` (Ollama) |
-| API Key | 空（Ollama 不需要） |
-| 模型 | `qwen2.5:3b` |
+| Provider | `ollama` |
+| API 地址 | `http://localhost:11434/v1` |
+| API Key | 空 |
+| Agent 模式 | `false` |
+| 模型 | `qwen3.5:4b` |
 | System Prompt | `You are a helpful assistant.` |
-| 温度 | 0.7 |
-| Max Tokens | 4096 |
-| 流式输出 | 开启 |
-| TTS 自动朗读 | 关闭 |
-| TTS 语言 | zh-CN |
-| TTS 速度 | 1.0x |
+| 温度 | `0.7` |
+| Max Tokens | `4096` |
+| 流式输出 | `true` |
+| TTS 自动朗读 | `false` |
+| TTS 语言 | `zh-CN` |
+| TTS 速度 | `1.0` |
 
 ## 开发命令
 
 ```bash
-pnpm dev        # 启动开发服务器 (http://localhost:5173)
-pnpm build      # TypeScript 检查 + 生产构建
-pnpm preview    # 预览生产构建
-pnpm tsc        # 仅 TypeScript 类型检查
+# 首次初始化本地后端
+python3 -m venv .venv
+./.venv/bin/pip install -r server/requirements.txt
+
+# 前端
+pnpm dev
+pnpm build
+pnpm preview
+
+# 后端
+pnpm dev:server
+pnpm server
+
+# Windows PowerShell 一键启动后端（推荐给 Windows + WSL 环境）
+.\scripts\dev-server.ps1
+
+# Windows 双击/命令行启动后端
+.\start-backend.bat
 ```
 
-## Node 版本管理
+### 本地开发建议
 
-项目根目录有 `.nvmrc` 文件锁定 Node 18.18.0。
-
-推荐使用 fnm 自动切换版本（详见 `docs/fnm-node-version-management.md`）：
-```bash
-# 安装 fnm（Windows）
-winget install Schniz.fnm
-
-# PowerShell Profile 加入自动切换
-# 编辑 $PROFILE 文件，加入：
-fnm env --use-on-cd --shell powershell | Out-String | Invoke-Expression
-```
-
-## 参考来源
-
-本项目骨架参考 Open WebUI (v0.8.12) 的以下模块：
-- 聊天页结构: `src/lib/components/chat/Chat.svelte`
-- 流式输出: `src/lib/apis/streaming/index.ts`
-- 模型接入: `src/lib/apis/openai/index.ts`
-- 语音接口: `src/lib/apis/audio/index.ts` + `src/lib/utils/audio.ts`
-- 状态管理: `src/lib/stores/index.ts`
+1. 先启动后端：Windows 推荐双击 `start-backend.bat`；PowerShell 可用 `.\scripts\dev-server.ps1`；WSL 内可用 `pnpm dev:server`
+2. 再启动前端：`pnpm dev`
+3. 前端通过 Vite 代理把 `/api/*` 转到后端；Windows + WSL 环境会自动使用 WSL IP，其他环境默认 `http://127.0.0.1:8000`
 
 ## 已完成功能
 
-- [x] 项目初始化：React + TypeScript + Vite + Tailwind + pnpm
-- [x] 聊天页骨架：ChatNavbar + MessageList + MessageInput 三层布局
-- [x] 流式输出：SSE 解析，对接 Ollama OpenAI 兼容端点
-- [x] 模型接入层：chatCompletion API，支持 base URL / model / apiKey
-- [x] 设置页面：侧滑抽屉，可视化配置所有参数
-- [x] 模型列表自动获取：从 API 拉取已安装模型，下拉选择
-- [x] 对话历史持久化：localStorage，刷新页面不丢失
-- [x] 多轮对话管理：侧边栏对话列表，新建/切换/删除
-- [x] 文件上传：读取文本文件内容作为 context 发给模型
-- [x] TTS 流式播放：AI 回复自动分句朗读
-- [x] 语音输入：Web Speech API STT + moaBridge 预留
-- [x] Markdown 渲染增强：代码语法高亮 + 复制按钮 + GFM 表格
-- [x] Android Bridge 接口预定义
+- [x] React + TypeScript + Vite + Tailwind 聊天前端
+- [x] Markdown / 代码高亮 / 文件与图片消息
+- [x] 多轮对话与侧边栏管理
+- [x] TTS 流式朗读
+- [x] Android WebView 壳工程
+- [x] Android 原生 STT / TTS / 文件选择 / 安全区桥接
+- [x] FastAPI 本地后端骨架
+- [x] SQLite 配置与聊天持久化
+- [x] Provider 配置同步到本地后端
+- [x] Provider 连接自检与设置页测试按钮
+- [x] 模型列表统一由后端代理
+- [x] 聊天统一走本地后端
+- [x] Agent v1 最小工具调用循环
+- [x] Agent v1 安全工具：当前时间、计算器
+- [x] Agent 研发/运维工具：日志分析、Git diff 摘要、工单总结、测试用例生成
+- [x] Agent 运行日志 v1：记录模型判断、工具调用、工具结果、最终回答
+- [x] Agent 工具调用格式改为 Open WebUI 风格的 `tool_calls` 数组
+- [x] Agent 日志详情前端展开面板
+- [x] Memory 简化版：手动新增、启用/停用、删除，并注入 Agent
+- [x] 文件落盘 + 文本抽取（txt/md/pdf/docx），独立 `files` 表
+- [x] 自研 RAG 知识库：建库、传文件、切片、向量化、余弦 topK 检索
+- [x] 聊天选知识库：命中片段注入 system_prompt，带引用来源，库外问题拒答
+- [x] RAG × Agent 融合：`search_knowledge` 工具 + 运行日志记录 + 引用来源
+- [x] 设置页可配置 embedding 模型，前端知识库管理抽屉 + 引用来源展示
+- [x] Ollama 图片请求自动切到原生 `/api/chat`
+- [x] Ollama NDJSON 在后端转换为 OpenAI SSE
+- [x] localStorage 与 SQLite 的启动合并同步
+- [x] WebView bridge JSON 参数修正
+- [x] Android STT 权限回调接通
+
+## Android 壳工程
+
+位于 `android/` 子目录，Kotlin + Gradle 独立构建。
+
+### 技术栈
+
+- 语言：Kotlin
+- 最低 API：26（Android 8.0）
+- Target API：34（Android 14）
+- 构建：Gradle 8.5 + AGP 8.2.2
+- 纯原生 API，无第三方业务依赖
+
+### H5 加载策略
+
+- **DEBUG**：加载开发服务器
+- **RELEASE**：加载 `file:///android_asset/web/index.html`
+- 通过 `BuildConfig.DEBUG` 自动切换
+
+### Bridge 通信流程
+
+```text
+H5: window.moaBridge.callNative(method, JSON.stringify(params))
+→ Android: MoaBridge.callNative(method, paramsJson)
+→ NativeSTT / NativeTTS / NativeFilePicker / SafeAreaHelper
+→ evaluateJavascript("window[cbFuncName](data)")
+→ H5 Promise resolve
+```
+
+## 当前边界
+
+当前版本已经具备：
+
+- 单用户本地使用
+- 本地配置管理
+- 对话持久化
+- 移动端壳接入
+- Ollama / OpenAI Compatible 模型代理
+- WSL → Windows Ollama 自动回退访问
+
+当前还没有做：
+
+- 用户系统
+- 权限控制
+- 工作流 / Dify 式可视化编排
+- PostgreSQL + pgvector / Redis / 多设备同步
+- 重排序（rerank）与混合检索（BM25 + 向量）
+- 文件级增量索引（当前为知识库整体重建）
 
 ## 后续迭代方向
 
-- [ ] 对话导出/分享（Markdown / JSON）
-- [ ] RAG 向量检索接入
-- [ ] Android WebView 壳工程
-- [ ] 原生桥接实际对接（STT/TTS/文件选择）
-- [ ] 图片消息支持（多模态模型）
-- [ ] 对话搜索
-- [ ] 主题切换（亮色/暗色）
+- [x] 文件内容入库或落盘，支持历史附件真正可重放
+- [x] 简单知识库：文件列表、文本抽取、按关键词/向量注入上下文
+- [x] RAG / 向量检索接入
+- [ ] 检索增强：rerank、混合检索、按文件增量索引
+- [ ] 聊天消息与附件拆表，替代当前单 JSON 存储
+- [ ] SQLite 升级为 PostgreSQL + pgvector 的迁移预案（见 `docs/rag-agent-copilot.md`）
+- [ ] 模型配置中心扩展为多 provider 列表
+- [ ] 统一错误码与后端日志
+- [ ] 更好的 TTS（Edge TTS / OpenAI TTS）
+- [ ] 主题切换与更完整的移动端交互优化
+
+## 下一步执行计划（入门路线）
+
+当前推荐不要直接上 Dify 式工作流，也不要马上引入复杂数据库。  
+下一阶段目标是：让本地开发链路更可观测，然后用最小闭环理解 Agent 的核心结构。
+
+### 第 1 步：稳定启动与连接自检（已完成）
+
+目标：用户能明确知道是哪一层出问题，而不是只看到前端 `HTTP 500`。
+
+已完成：
+
+- 后端新增 `POST /api/config/provider/verify`
+- 返回当前 provider 类型、配置地址、实际访问地址、模型数量、错误信息
+- 设置页新增“测试连接”按钮
+- 测试成功后显示可用模型列表摘要
+- 测试失败时显示明确原因，例如 FastAPI 未启动、Ollama 未启动、模型服务不可达、API Key 错误
+
+学习点：
+
+- FastAPI 路由如何组织
+- Pydantic 返回结构如何设计
+- 前端如何调用后端接口
+- UI 如何处理 loading / success / error 状态
+
+### 第 2 步：Agent v1，最小工具调用循环（已完成）
+
+目标：从“普通聊天 App”进入“Agent App”。
+
+已完成两个安全工具：
+
+- `get_current_time`：获取当前时间
+- `calculator`：执行简单四则运算
+
+一次 Agent 请求的基本流程：
+
+```text
+用户输入
+→ 后端构造 system prompt，告诉模型有哪些工具
+→ 模型判断是否需要调用工具
+→ 后端执行工具
+→ 把工具结果再交给模型
+→ 模型生成最终回答
+→ 前端展示
+```
+
+学习点：
+
+- Agent 不是神秘能力，本质是“模型 + 工具 + 控制循环”
+- 工具必须由后端白名单控制，不能让模型直接执行任意命令
+- 每次工具调用都应该记录日志，方便调试
+
+当前实现边界：
+
+- Agent v1 依赖模型按 JSON 协议输出，模型不稳定时可能需要重试或改进提示词
+- 已兼容 `{"action":"calculator","expression":"..."}` 这类小模型常见错误格式
+- 当前主协议已调整为 `{"tool_calls":[{"name":"calculator","parameters":{...}}]}`
+- 当前流式响应是“最终答案一次性 SSE 输出”，不是逐 token 展示 Agent 中间过程
+
+### 第 3 步：Agent 运行日志（已完成 v1）
+
+目标：让你能看懂 Agent 为什么这么回答。
+
+已记录：
+
+- 用户输入
+- 模型第一次判断
+- 调用的工具名
+- 工具参数
+- 工具返回结果
+- 最终回答
+
+当前前端展示：
+
+- assistant 消息下显示 `Agent 调用 N 个工具：tool_name`
+- 详细步骤可通过 `GET /api/agent/runs/{run_id}` 查询
+
+学习点：
+
+- 可观测性比“功能多”更重要
+- Agent 出错时，日志能快速定位是模型判断错、工具参数错，还是工具执行错
+
+### 第 4 步：记忆与偏好（已完成简化版）
+
+目标：让 App 开始像“个人助手”，而不只是一次性聊天。
+
+已完成简单记忆：
+
+- 用户昵称
+- 常用语言
+- 常用技术栈
+- 默认回答风格
+- 项目路径和项目目标摘要
+
+当前实现：
+
+- 设置页可新增 memory
+- 支持 `fact` / `preference` / `profile` / `project` 分类
+- 支持启用、停用、删除
+- Agent 请求自动注入已启用 memory
+- 暂不做 embedding，相似度检索留到 RAG 阶段
+
+学习点：
+
+- 记忆不是把所有聊天塞进 prompt
+- 应该把稳定偏好和长期事实单独存储
+- 每次请求只注入必要记忆
+
+### 第 5 步：文件知识库 / RAG
+
+目标：让 Agent 能回答项目文档、代码片段、个人资料里的问题。
+
+建议等前 4 步稳定后再做：
+
+- 文件落盘
+- 文本切分
+- 向量索引
+- 相似度检索
+- 检索结果注入 prompt
+
+学习点：
+
+- RAG 是“检索 + 上下文注入”，不是简单上传文件
+- 文件、分块、索引、引用来源要分开设计
+
+## 参考来源
+
+本项目骨架参考 Open WebUI（v0.8.12）以下方向：
+
+- 聊天页结构
+- 模型代理与配置分层
+- 流式输出处理
+- 音频能力接入思路
+- 聊天持久化建模方式
+
+更具体的 Open WebUI 对照拆解见：
+
+- `docs/open-webui-analysis.md`
