@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "myopenweb": {
+      "command": "wsl.exe",
+      "args": [
+        "bash",
+        "-lc",
+        "cd /mnt/d/ai_one/MyOpenWeb && ./.venv/bin/python -m server.mcp_server.main"
+      ]
+    }
+  }
+}

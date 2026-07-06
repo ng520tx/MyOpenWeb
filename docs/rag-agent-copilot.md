@@ -12,6 +12,7 @@
 3. 研发/运维 Agent 工具：日志分析、Git diff 摘要、工单总结、测试用例生成，并能让 Agent 自己决定调用 `search_knowledge` 查知识库；思考/工具调用/工具结果全过程经 SSE 实时推送，前端渲染步骤时间线。
 4. 检索质量评测：自建 40 条 QA 评测集 + 8 条多轮指代追问集，Hit@K / MRR / 延迟跨参数对照（见第 7 节）。
 5. 框架认知对照：`examples/langgraph-agent/` 用 LangGraph 复刻同等 Agent 能力，沉淀"手写循环 vs 框架"的对比结论（见第 10 节）。
+6. MCP Server：知识库检索与研发/运维工具经官方 `mcp` SDK 暴露为标准 MCP 服务，Cursor 等客户端可直接在 IDE 里查企业知识库（见第 11 节）。
 
 全程自研、零额外服务部署（向量直接存 SQLite，BM25 用 SQLite 内置 FTS5，内存余弦检索），便于面试讲清底层，也便于小规模私有部署。
 
@@ -340,7 +341,33 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 
 **结论**：小规模、可控性优先时手写更划算（协议容错、观测字段全白盒）；出现多分支规划、并行工具、human-in-the-loop、checkpoint 恢复需求时应切 LangGraph，不再手写。主工程工具是纯函数，迁移只需 `@tool` 包装。完整说明见 `examples/langgraph-agent/README.md`。
 
-## 11. 后续扩展预案（仅方案，未实现）
+## 11. MCP Server（把知识库暴露给任意 MCP 客户端）
+
+`server/mcp_server/main.py` 用官方 `mcp` SDK（FastMCP）把服务层直接包成标准 MCP 工具，stdio transport，Cursor / Claude Desktop 等客户端可以子进程方式拉起并在 IDE 里直接查企业知识库：
+
+- `search_knowledge(knowledge, query, top_k)`：完整复用 `services/rag.py` 的 `query_knowledge`（混合检索 BM25+向量 RRF → 可选 rerank 全链路），支持按知识库名称或 id 检索
+- `list_knowledge_bases()`：列出全部知识库与文件/块数量，供模型先发现再检索
+- `analyze_log` / `summarize_git_diff` / `summarize_ticket` / `generate_test_cases`：复用 `services/agent_tools.py` 纯函数，一层 `@mcp.tool()` 包装——印证"业务与编排解耦，同一套工具可同时挂到自研 Agent 循环和 MCP 协议上"
+
+Cursor 配置（项目内 `.cursor/mcp.json` 已就绪，Windows 宿主 + WSL venv）：
+
+```json
+{
+  "mcpServers": {
+    "myopenweb": {
+      "command": "wsl.exe",
+      "args": ["bash", "-lc",
+        "cd /mnt/d/ai_one/MyOpenWeb && ./.venv/bin/python -m server.mcp_server.main"]
+    }
+  }
+}
+```
+
+验证方式：`./.venv/bin/python -m server.eval.mcp_smoke` 走真实 stdio 协议完成 list_tools → analyze_log → list_knowledge_bases → search_knowledge 四步冒烟；单测见 `server/tests/test_mcp_server.py`。
+
+面试话术：MCP 是"AI 工具层的 USB-C"。open-webui 内置的是 MCP **client**（连别人的工具）；MyOpenWeb 做的是 MCP **Server**（把企业知识库变成别人可连的工具），两者互补，且 Server 侧更能体现"已有服务如何标准化输出"的工程判断。
+
+## 12. 后续扩展预案（仅方案，未实现）
 
 - **PostgreSQL + pgvector 迁移**：把 `chunks.embedding` 改为 `vector` 列，检索改为 SQL `ORDER BY embedding <=> :q LIMIT k`；`repositories` 层接口不变，替换实现即可，便于写"企业级"简历。
 - **按文件增量索引**：当前为知识库整体重建，规模大后改为按文件维度增量更新 chunks 与 FTS。

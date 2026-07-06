@@ -5,3 +5,5 @@ python-multipart>=0.0.9,<1
 pypdf>=5,<6
 python-docx>=1.1,<2
 numpy>=1.26,<3
+# MCP server: exposes knowledge search + dev/ops tools to MCP clients (Cursor 等)
+mcp>=1.0,<2

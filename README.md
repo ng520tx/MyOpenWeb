@@ -12,6 +12,7 @@
 - **文档解析**：txt / md / pdf / docx 文本抽取；扫描件、复杂表格可选接入 PaddleOCR PP-StructureV3 输出版面感知 Markdown，服务不可达时优雅降级
 - **研发/运维 Agent 工具**：日志分析（级别统计/异常归因/排查建议）、Git diff 变更摘要与风险点、工单结构化总结、测试用例生成
 - **RAG × Agent 融合**：Agent 自主决定调用 `search_knowledge` 检索知识库，全过程写入运行日志（`agent_runs` / `agent_steps`），前端可展开查看每一步
+- **MCP Server**：知识库检索与研发/运维工具经官方 `mcp` SDK 暴露为标准 MCP 服务（stdio），Cursor / Claude Desktop 配置后可在 IDE 里直接查企业知识库
 - **多模型接入**：Ollama（原生 `/api/chat`，NDJSON 自动转 OpenAI SSE）与任意 OpenAI Compatible 接口，前端只维护一种流解析
 - **移动端入口**：Android WebView 壳 + JS 桥接原生语音输入（STT）、语音播报（TTS）、文件选择、安全区适配
 - **长期记忆**：手动维护偏好/事实/项目记忆，按开关注入 Agent 上下文
@@ -125,6 +126,24 @@ docker compose exec ollama ollama pull bge-m3
 
 容器内 FastAPI 直接托管构建好的 H5，打开 `http://localhost:8000` 即可使用；数据持久化在 `myopenweb-data` 卷。
 
+### MCP Server（在 Cursor 里直接查企业知识库）
+
+知识库检索与研发/运维工具已通过官方 `mcp` SDK 暴露为标准 MCP 服务（stdio transport）。Cursor 用户在 `~/.cursor/mcp.json`（或项目 `.cursor/mcp.json`）加入：
+
+```json
+{
+  "mcpServers": {
+    "myopenweb": {
+      "command": "wsl.exe",
+      "args": ["bash", "-lc",
+        "cd /mnt/d/ai_one/MyOpenWeb && ./.venv/bin/python -m server.mcp_server.main"]
+    }
+  }
+}
+```
+
+Linux/macOS 直接 `command: "/path/to/.venv/bin/python"` + `args: ["-m", "server.mcp_server.main"]`。工具清单：`search_knowledge`（混合检索全链路）、`list_knowledge_bases`、`analyze_log`、`summarize_git_diff`、`summarize_ticket`、`generate_test_cases`。协议冒烟：`python -m server.eval.mcp_smoke`。
+
 ## 检索质量评测
 
 自建评测集（3 份企业文档语料、40 条 QA 对，见 `server/eval/`），Hit@K 与 MRR 实测（bge-m3 向量，CPU 环境，完整报告见 [server/eval/results.md](server/eval/results.md)）：
@@ -200,6 +219,7 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 - [x] 后端单元测试 + GitHub Actions CI
 - [x] Agent 中间过程流式推送（思考 / 工具调用 / 工具结果实时时间线）
 - [x] 多轮对话检索改写（query rewrite，Hit@1 +26pp）
+- [x] MCP Server（知识库 + 工具暴露为标准 MCP 服务，Cursor 可直连）
 - [ ] PostgreSQL + pgvector 可切换向量后端
 
 ## License
