@@ -46,6 +46,7 @@ export default function ChatPage() {
       store.setGenerating(true);
       resetStreamTTS();
       thinkingRef.current = false;
+      const startedAt = Date.now();
 
       try {
         const currentMessages = useAppStore.getState().getMessages();
@@ -102,12 +103,19 @@ export default function ChatPage() {
             if (update.sources) {
               useAppStore.getState().updateMessage(aiId, { sources: update.sources });
             }
+            if (update.usage) {
+              useAppStore.getState().updateMessage(aiId, { usage: update.usage });
+            }
             if (update.done) {
               if (thinkBuf && !thinkingRef.current) {
                 useAppStore.getState().appendContent(aiId, thinkBuf);
               }
               // 时间线只服务于生成过程，落库前清掉（完整步骤在 Agent 运行日志里）
-              useAppStore.getState().updateMessage(aiId, { done: true, agentEvents: undefined });
+              useAppStore.getState().updateMessage(aiId, {
+                done: true,
+                agentEvents: undefined,
+                durationMs: Date.now() - startedAt,
+              });
               break;
             }
           }
@@ -115,7 +123,14 @@ export default function ChatPage() {
         } else {
           const data = await res.json();
           const content = data.choices?.[0]?.message?.content ?? '';
-          useAppStore.getState().updateMessage(aiId, { content, done: true, agent: data.agent, sources: data.sources });
+          useAppStore.getState().updateMessage(aiId, {
+            content,
+            done: true,
+            agent: data.agent,
+            sources: data.sources,
+            usage: data.usage,
+            durationMs: Date.now() - startedAt,
+          });
           flushStreamTTS();
         }
       } catch (err: unknown) {

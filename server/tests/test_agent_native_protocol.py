@@ -60,11 +60,12 @@ async def test_native_loop_executes_tool_and_feeds_back_tool_message(monkeypatch
     ]
     seen_payloads: list[dict] = []
 
-    async def fake_message(config, payload):
+    async def fake_full(config, payload):
         seen_payloads.append(payload)
-        return responses[min(len(seen_payloads) - 1, len(responses) - 1)]
+        message = responses[min(len(seen_payloads) - 1, len(responses) - 1)]
+        return {"choices": [{"message": message}]}
 
-    monkeypatch.setattr(agent_runner, "create_chat_completion_message", fake_message)
+    monkeypatch.setattr(agent_runner, "create_chat_completion_full", fake_full)
 
     result = None
     events = []

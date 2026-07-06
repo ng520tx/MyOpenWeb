@@ -216,6 +216,12 @@ export default function MessageBubble({ message, showFollowUps, onFollowUpClick 
                 )}
               </>
             )}
+            {!isUser && message.done && message.usage && (
+              <div className="mt-1.5 text-[11px] text-neutral-500">
+                输入 {message.usage.prompt_tokens} / 输出 {message.usage.completion_tokens} tokens
+                {message.durationMs != null && ` · 耗时 ${(message.durationMs / 1000).toFixed(1)} s`}
+              </div>
+            )}
             {showFollowUps && message.done && (message.followUps?.length ?? 0) > 0 && (
               <div className="mt-2.5 flex flex-wrap gap-1.5">
                 {message.followUps!.map((followUp) => (

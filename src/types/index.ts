@@ -15,6 +15,10 @@ export interface ChatMessage {
   agentEvents?: AgentStepEvent[];
   /** 回答完成后异步生成的追问建议（仅最新一条回答下渲染 chip） */
   followUps?: string[];
+  /** 本次回答的 token 用量（后端 usage 帧透传） */
+  usage?: ResponseUsage;
+  /** 从发送到回答完成的耗时（毫秒） */
+  durationMs?: number;
 }
 
 export interface AgentStepEvent {

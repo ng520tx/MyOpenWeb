@@ -17,6 +17,7 @@
 - **移动端入口**：Android WebView 壳 + JS 桥接原生语音输入（STT）、语音播报（TTS）、文件选择、安全区适配
 - **长期记忆**：手动维护偏好/事实/项目记忆，按开关注入 Agent 上下文
 - **LLM 异步增强**：对话标题自动生成、回答后追问建议 chip（点击即问），失败静默不阻塞聊天
+- **Token 用量观测**：非流式 / 流式 / Agent 多轮全链路透传 usage，气泡底部展示输入/输出 tokens 与耗时，Agent 每轮模型调用 usage 落库可回放
 - **全量持久化**：对话、配置、文件、知识库、向量、Agent 日志全部落 SQLite，重启不丢
 
 ## 界面预览
@@ -233,6 +234,7 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 - [x] 检索自纠错（Grader 评估 + 有界重检索，开/关对照评测）
 - [x] Agent 联网搜索工具（ddgs 免 key，可选开关 + 优雅降级）
 - [x] LLM 对话标题生成 + 追问建议 chip（异步增强）
+- [x] Token 用量统计（usage 全链路透传 + 气泡展示 + agent_runs 落库）
 - [ ] PostgreSQL + pgvector 可切换向量后端
 
 ## License

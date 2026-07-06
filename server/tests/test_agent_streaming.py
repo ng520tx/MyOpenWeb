@@ -16,13 +16,17 @@ def _config() -> ProviderConfig:
 
 
 def _fake_completion_factory(responses: list[str]):
-    """Return an async stub that plays back canned model responses in order."""
+    """Return an async stub that plays back canned model responses in order,
+    wrapped in the normalized full-completion shape (choices + usage)."""
     calls = {"count": 0}
 
     async def fake(config, payload):
         index = min(calls["count"], len(responses) - 1)
         calls["count"] += 1
-        return responses[index]
+        return {
+            "choices": [{"message": {"role": "assistant", "content": responses[index]}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
 
     return fake
 
@@ -31,7 +35,7 @@ def _fake_completion_factory(responses: list[str]):
 async def test_run_agent_events_yields_progress_then_result(monkeypatch):
     monkeypatch.setattr(
         agent_runner,
-        "create_chat_completion_text",
+        "create_chat_completion_full",
         _fake_completion_factory(
             [
                 '{"tool_calls":[{"name":"calculator","parameters":{"expression":"6*7"}}]}',
@@ -59,13 +63,15 @@ async def test_run_agent_events_yields_progress_then_result(monkeypatch):
     assert result is not None
     assert result["answer"] == "结果是 42"
     assert result["agent"]["toolCalls"][0]["name"] == "calculator"
+    # Two model rounds, 15 total tokens each, accumulated into the result.
+    assert result["usage"] == {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30}
 
 
 @pytest.mark.anyio
 async def test_stream_agent_sse_frames(monkeypatch):
     monkeypatch.setattr(
         agent_runner,
-        "create_chat_completion_text",
+        "create_chat_completion_full",
         _fake_completion_factory(['{"action":"final","answer":"直接回答"}']),
     )
 
@@ -88,3 +94,5 @@ async def test_stream_agent_sse_frames(monkeypatch):
     assert parsed[-2]["choices"][0]["delta"]["content"] == "直接回答"
     assert parsed[-1]["choices"][0]["finish_reason"] == "stop"
     assert "agent" in parsed[-1] and "sources" in parsed[-1]
+    # usage rides on the stop frame so the client can attach it to the message.
+    assert parsed[-1]["usage"]["total_tokens"] == 15

@@ -14,6 +14,7 @@
 5. 框架认知对照：`examples/langgraph-agent/` 用 LangGraph 复刻同等 Agent 能力，沉淀"手写循环 vs 框架"的对比结论（见第 10 节）。
 6. MCP Server：知识库检索与研发/运维工具经官方 `mcp` SDK 暴露为标准 MCP 服务，Cursor 等客户端可直接在 IDE 里查企业知识库（见第 11 节）。
 7. LLM 异步增强：对话标题生成（替换截断标题）+ 追问建议 chip（参考 open-webui tasks 思路，prompt 自研），回答完成后异步触发，失败静默不影响主链路。
+8. Token 用量观测（LLMOps 最小闭环）：非流式 / 流式 / Agent 多轮全链路透传 usage，气泡底部展示 tokens 与耗时，Agent 每轮模型调用 usage 落库（见第 12 节）。
 
 全程自研、零额外服务部署（向量直接存 SQLite，BM25 用 SQLite 内置 FTS5，内存余弦检索），便于面试讲清底层，也便于小规模私有部署。
 
@@ -385,7 +386,19 @@ Cursor 配置（项目内 `.cursor/mcp.json` 已就绪，Windows 宿主 + WSL ve
 
 面试话术：MCP 是"AI 工具层的 USB-C"。open-webui 内置的是 MCP **client**（连别人的工具）；MyOpenWeb 做的是 MCP **Server**（把企业知识库变成别人可连的工具），两者互补，且 Server 侧更能体现"已有服务如何标准化输出"的工程判断。
 
-## 12. 后续扩展预案（仅方案，未实现）
+## 12. Token 用量观测（LLMOps 最小闭环）
+
+成本与用量是模型应用上线后的第一个运营问题。实现为三层透传，全链路不新增任何阻塞调用：
+
+- **后端换算**：Ollama 原生 `/api/chat` 的 done 帧携带 `prompt_eval_count` / `eval_count`，`providers.py` 统一换算成 OpenAI usage 结构（`prompt_tokens` / `completion_tokens` / `total_tokens`）；非流式直接挂到响应 JSON，流式挂在 `finish_reason=stop` 帧上。OpenAI Compatible 流式请求自动注入 `stream_options.include_usage`，上游（OpenAI / Ollama `/v1` / vLLM）会在末尾补发 usage 帧。
+- **Agent 多轮累计**：Agent 循环每轮模型调用的 usage 写入该轮 `model_decision` 步骤的 `agent_steps.output_json`（运行日志可回放单轮成本），同时累计进最终 result，随 stop 帧透出。
+- **前端展示**：`streaming.ts` 解析 usage 帧挂到消息上（OpenAI 的 usage 帧在 stop 之后到达，stop 帧挂起等 `[DONE]` 再吐出）；`MessageBubble` 在完成的回答底部以小字显示"输入 x / 输出 y tokens · 耗时 z s"，耗时为发送到完成的端到端时长。
+
+验证：非流式 / 流式 / Agent 三路真实 Ollama 冒烟均带 usage；Agent 两轮 854 + 1001 tokens 与 stop 帧累计 1855 一致；`agent_steps` 落库可查。
+
+面试话术：这是 LLMOps 的最小可用闭环——先让每一次调用的 token 成本可见、可落库、可按 run 回放，扩展方向才是按用户/按模型聚合报表与限额。
+
+## 13. 后续扩展预案（仅方案，未实现）
 
 - **PostgreSQL + pgvector 迁移**：把 `chunks.embedding` 改为 `vector` 列，检索改为 SQL `ORDER BY embedding <=> :q LIMIT k`；`repositories` 层接口不变，替换实现即可，便于写"企业级"简历。
 - **按文件增量索引**：当前为知识库整体重建，规模大后改为按文件维度增量更新 chunks 与 FTS。

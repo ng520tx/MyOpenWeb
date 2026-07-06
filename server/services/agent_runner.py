@@ -17,10 +17,7 @@ from server.services.agent_tools import (
     list_tools,
     run_tool,
 )
-from server.services.providers import (
-    create_chat_completion_message,
-    create_chat_completion_text,
-)
+from server.services.providers import create_chat_completion_full
 from server.services.rag import query_knowledge, serialize_sources
 from server.services.web_search import WEB_SEARCH_TOOL_NAME, search_web, web_search_tool
 
@@ -68,7 +65,7 @@ async def create_agent_completion(config: ProviderConfig, payload: dict):
         )
 
     result = await run_agent(config, payload)
-    return {
+    response: dict[str, Any] = {
         "id": "agentcmpl-myopenweb",
         "object": "chat.completion",
         "choices": [
@@ -81,6 +78,9 @@ async def create_agent_completion(config: ProviderConfig, payload: dict):
         "agent": result["agent"],
         "sources": result["sources"],
     }
+    if result.get("usage"):
+        response["usage"] = result["usage"]
+    return response
 
 
 async def run_agent(config: ProviderConfig, payload: dict) -> dict[str, Any]:
@@ -136,40 +136,40 @@ async def run_agent_events(
         native_tools = None
     system_prompt = "\n\n".join(part for part in prompt_parts if part)
     collected_chunks: list[dict[str, Any]] = []
+    total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     for round_index in range(3):
         yield ("event", {"type": "thinking", "round": round_index + 1})
         assistant_message: dict[str, Any] | None = None
+        request_payload: dict[str, Any] = {
+            **payload,
+            "messages": messages,
+            "system_prompt": system_prompt,
+            "stream": False,
+        }
         if use_native:
-            assistant_message = await create_chat_completion_message(
-                config,
-                {
-                    **payload,
-                    "messages": messages,
-                    "system_prompt": system_prompt,
-                    "stream": False,
-                    "tools": native_tools,
-                },
-            )
+            request_payload["tools"] = native_tools
+        completion = await create_chat_completion_full(config, request_payload)
+        round_usage = completion.get("usage") if isinstance(completion.get("usage"), dict) else None
+        if round_usage:
+            for key in total_usage:
+                total_usage[key] += int(round_usage.get(key) or 0)
+        message = completion.get("choices", [{}])[0].get("message", {})
+        if not isinstance(message, dict):
+            message = {"role": "assistant", "content": str(message)}
+        if use_native:
+            assistant_message = message
             raw = json.dumps(assistant_message, ensure_ascii=False)
             decision = _decision_from_native(assistant_message)
         else:
-            raw = await create_chat_completion_text(
-                config,
-                {
-                    **payload,
-                    "messages": messages,
-                    "system_prompt": system_prompt,
-                    "stream": False,
-                },
-            )
+            raw = str(message.get("content", ""))
             decision = _normalize_agent_decision(_parse_agent_json(raw))
         add_agent_step(
             run_id=run_id,
             step_index=step_index,
             step_type="model_decision",
             input_data={"messages_count": len(messages)},
-            output_data={"raw": raw, "decision": decision},
+            output_data={"raw": raw, "decision": decision, "usage": round_usage},
         )
         step_index += 1
 
@@ -183,7 +183,7 @@ async def run_agent_events(
                 output_data={"answer": final_answer},
             )
             finish_agent_run(run_id, final_answer)
-            yield ("result", _agent_result(run_id, final_answer, steps, collected_chunks))
+            yield ("result", _agent_result(run_id, final_answer, steps, collected_chunks, total_usage))
             return
 
         tool_calls = decision.get("tool_calls") if isinstance(decision.get("tool_calls"), list) else []
@@ -197,7 +197,7 @@ async def run_agent_events(
                 output_data={"answer": final_answer},
             )
             finish_agent_run(run_id, final_answer)
-            yield ("result", _agent_result(run_id, final_answer, steps, collected_chunks))
+            yield ("result", _agent_result(run_id, final_answer, steps, collected_chunks, total_usage))
             return
 
         tool_results: list[dict[str, Any]] = []
@@ -302,7 +302,7 @@ async def run_agent_events(
         error="max_steps_exceeded",
     )
     finish_agent_run(run_id, final_answer)
-    yield ("result", _agent_result(run_id, final_answer, steps, collected_chunks))
+    yield ("result", _agent_result(run_id, final_answer, steps, collected_chunks, total_usage))
 
 
 def _agent_result(
@@ -310,11 +310,13 @@ def _agent_result(
     answer: str,
     steps: list[dict[str, Any]],
     chunks: list[dict[str, Any]] | None = None,
+    usage: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     return {
         "answer": answer,
         "steps": steps,
         "sources": serialize_sources(_dedupe_chunks(chunks or [])),
+        "usage": usage if usage and usage.get("total_tokens") else None,
         "agent": {
             "runId": run_id,
             "toolCalls": [
@@ -546,11 +548,12 @@ async def _stream_agent_sse(config: ProviderConfig, payload: dict) -> AsyncItera
     yield _sse_frame(
         {"choices": [{"delta": {"content": result["answer"]}, "finish_reason": None}]}
     )
-    yield _sse_frame(
-        {
-            "choices": [{"delta": {}, "finish_reason": "stop"}],
-            "agent": result["agent"],
-            "sources": result["sources"],
-        }
-    )
+    final_frame: dict[str, Any] = {
+        "choices": [{"delta": {}, "finish_reason": "stop"}],
+        "agent": result["agent"],
+        "sources": result["sources"],
+    }
+    if result.get("usage"):
+        final_frame["usage"] = result["usage"]
+    yield _sse_frame(final_frame)
     yield b"data: [DONE]\n\n"

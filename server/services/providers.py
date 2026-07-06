@@ -118,8 +118,12 @@ def _with_system_prompt(messages: list[dict], system_prompt: str | None) -> list
     return [{"role": "system", "content": system_prompt}, *messages]
 
 
-def _format_sse_chunk(delta: str = "", finish_reason: str | None = None) -> bytes:
-    payload = {
+def _format_sse_chunk(
+    delta: str = "",
+    finish_reason: str | None = None,
+    usage: dict | None = None,
+) -> bytes:
+    payload: dict = {
         "choices": [
             {
                 "delta": {"content": delta} if delta else {},
@@ -127,7 +131,24 @@ def _format_sse_chunk(delta: str = "", finish_reason: str | None = None) -> byte
             }
         ]
     }
+    if usage:
+        payload["usage"] = usage
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
+
+
+def _ollama_usage(parsed: dict) -> dict | None:
+    """Map Ollama's eval counters onto the OpenAI usage shape."""
+    prompt_tokens = parsed.get("prompt_eval_count")
+    completion_tokens = parsed.get("eval_count")
+    if prompt_tokens is None and completion_tokens is None:
+        return None
+    prompt_tokens = int(prompt_tokens or 0)
+    completion_tokens = int(completion_tokens or 0)
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
 
 
 def _map_model_list(config: ProviderConfig, payload: dict) -> list[dict]:
@@ -166,6 +187,10 @@ def _build_openai_body(
         "temperature": payload.get("temperature", 0.7),
         "max_tokens": payload.get("max_tokens", 4096),
     }
+    if body["stream"]:
+        # Ask OpenAI-compatible upstreams (OpenAI/Ollama/vLLM) to emit a final
+        # usage frame; unknown-field-tolerant servers simply ignore it.
+        body["stream_options"] = {"include_usage": True}
     if payload.get("tools"):
         body["tools"] = payload["tools"]
     if config.provider_type == "ollama":
@@ -307,7 +332,7 @@ async def _stream_ollama_response(response: httpx.Response) -> AsyncIterator[byt
                 yield _format_sse_chunk(delta=content)
 
             if parsed.get("done") is True:
-                yield _format_sse_chunk(finish_reason="stop")
+                yield _format_sse_chunk(finish_reason="stop", usage=_ollama_usage(parsed))
                 yield b"data: [DONE]\n\n"
                 return
 
@@ -384,7 +409,7 @@ async def create_chat_completion(config: ProviderConfig, payload: dict):
                 }
                 if raw_message.get("tool_calls"):
                     message["tool_calls"] = raw_message["tool_calls"]
-                return {
+                normalized: dict = {
                     "id": result.get("id", "chatcmpl-ollama"),
                     "object": "chat.completion",
                     "choices": [
@@ -395,6 +420,10 @@ async def create_chat_completion(config: ProviderConfig, payload: dict):
                         }
                     ],
                 }
+                usage = _ollama_usage(result)
+                if usage:
+                    normalized["usage"] = usage
+                return normalized
 
             return response.json()
 
@@ -404,18 +433,23 @@ async def create_chat_completion(config: ProviderConfig, payload: dict):
     ) from last_error
 
 
-async def create_chat_completion_text(config: ProviderConfig, payload: dict) -> str:
+async def create_chat_completion_full(config: ProviderConfig, payload: dict) -> dict:
+    """Non-stream completion returning the whole normalized response
+    (choices + usage). Callers that need token accounting use this."""
     result = await create_chat_completion(config, {**payload, "stream": False})
     if not isinstance(result, dict):
         raise HTTPException(status_code=502, detail="Non-stream chat request returned an unexpected response")
+    return result
+
+
+async def create_chat_completion_text(config: ProviderConfig, payload: dict) -> str:
+    result = await create_chat_completion_full(config, payload)
     return str(result.get("choices", [{}])[0].get("message", {}).get("content", ""))
 
 
 async def create_chat_completion_message(config: ProviderConfig, payload: dict) -> dict:
     """Non-stream completion returning the full assistant message (content +
     tool_calls). Used by the agent's native function-calling protocol."""
-    result = await create_chat_completion(config, {**payload, "stream": False})
-    if not isinstance(result, dict):
-        raise HTTPException(status_code=502, detail="Non-stream chat request returned an unexpected response")
+    result = await create_chat_completion_full(config, payload)
     message = result.get("choices", [{}])[0].get("message", {})
     return message if isinstance(message, dict) else {"role": "assistant", "content": str(message)}
