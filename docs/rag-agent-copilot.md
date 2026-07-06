@@ -13,6 +13,7 @@
 4. 检索质量评测：自建 40 条 QA 评测集 + 8 条多轮指代追问集，Hit@K / MRR / 延迟跨参数对照（见第 7 节）。
 5. 框架认知对照：`examples/langgraph-agent/` 用 LangGraph 复刻同等 Agent 能力，沉淀"手写循环 vs 框架"的对比结论（见第 10 节）。
 6. MCP Server：知识库检索与研发/运维工具经官方 `mcp` SDK 暴露为标准 MCP 服务，Cursor 等客户端可直接在 IDE 里查企业知识库（见第 11 节）。
+7. LLM 异步增强：对话标题生成（替换截断标题）+ 追问建议 chip（参考 open-webui tasks 思路，prompt 自研），回答完成后异步触发，失败静默不影响主链路。
 
 全程自研、零额外服务部署（向量直接存 SQLite，BM25 用 SQLite 内置 FTS5，内存余弦检索），便于面试讲清底层，也便于小规模私有部署。
 
@@ -169,6 +170,15 @@ Agent 模式 + knowledge_id → agent_runner
 
 - `POST /api/chat/completions` 与 `POST /api/agent/completions` 新增可选字段：`knowledge_id`、`rag_top_k`。
 - 流式响应中通过 `data: {"sources":[...]}` 事件回传引用来源（前端 `streaming.ts` 解析 `parsed.sources`）。
+
+### 异步增强任务 `/api/tasks`
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/tasks/title` | `{model, user_text, assistant_text?}` → `{title}`，LLM 生成 ≤20 字对话标题；失败返回 `{title: null}` |
+| POST | `/api/tasks/follow_ups` | `{model, messages}` → `{follow_ups: [..]}`，生成 3 条追问建议；失败返回空数组 |
+
+两个接口均由前端在回答完成后异步调用（fire-and-forget）：标题成功后替换 `addMessage` 的 30 字截断标题并同步到后端，失败保持截断标题；追问建议渲染为回答下方的可点击 chip（仅最新一条回答显示），点击即发送。生成失败不影响聊天主链路。
 
 ## 5. 使用步骤（本地）
 

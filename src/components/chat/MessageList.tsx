@@ -6,9 +6,10 @@ import ChatPlaceholder from './ChatPlaceholder';
 interface MessageListProps {
   messages: ChatMessage[];
   generating: boolean;
+  onFollowUpClick?: (text: string) => void;
 }
 
-export default function MessageList({ messages, generating }: MessageListProps) {
+export default function MessageList({ messages, generating, onFollowUpClick }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const shouldAutoScroll = useRef(true);
@@ -36,8 +37,13 @@ export default function MessageList({ messages, generating }: MessageListProps) 
       onScroll={handleScroll}
       className="flex-1 overflow-y-auto px-4 py-3"
     >
-      {messages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} />
+      {messages.map((msg, index) => (
+        <MessageBubble
+          key={msg.id}
+          message={msg}
+          showFollowUps={index === messages.length - 1 && !generating}
+          onFollowUpClick={onFollowUpClick}
+        />
       ))}
       {generating && (
         <div className="flex items-center gap-1 py-2 px-1 text-neutral-400">

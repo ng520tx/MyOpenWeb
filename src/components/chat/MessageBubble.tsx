@@ -7,9 +7,12 @@ import CodeBlock from './CodeBlock';
 
 interface MessageBubbleProps {
   message: ChatMessage;
+  /** 仅最新一条完成的回答下渲染追问 chip；点击即发送 */
+  showFollowUps?: boolean;
+  onFollowUpClick?: (text: string) => void;
 }
 
-export default function MessageBubble({ message }: MessageBubbleProps) {
+export default function MessageBubble({ message, showFollowUps, onFollowUpClick }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const imageFiles = message.files?.filter((f) => f.isImage && f.dataUrl) ?? [];
   const textFiles = message.files?.filter((f) => !f.isImage) ?? [];
@@ -212,6 +215,20 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
                   </div>
                 )}
               </>
+            )}
+            {showFollowUps && message.done && (message.followUps?.length ?? 0) > 0 && (
+              <div className="mt-2.5 flex flex-wrap gap-1.5">
+                {message.followUps!.map((followUp) => (
+                  <button
+                    key={followUp}
+                    type="button"
+                    onClick={() => onFollowUpClick?.(followUp)}
+                    className="rounded-full border border-neutral-600 bg-neutral-800/80 px-3 py-1.5 text-xs text-neutral-300 active:bg-neutral-700 active:text-neutral-100"
+                  >
+                    {followUp}
+                  </button>
+                ))}
+              </div>
             )}
           </>
         )}

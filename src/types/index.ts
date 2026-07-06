@@ -13,6 +13,8 @@ export interface ChatMessage {
   sources?: RetrievalSource[];
   /** Agent 生成过程中实时推送的步骤事件（仅生成中渲染时间线用） */
   agentEvents?: AgentStepEvent[];
+  /** 回答完成后异步生成的追问建议（仅最新一条回答下渲染 chip） */
+  followUps?: string[];
 }
 
 export interface AgentStepEvent {

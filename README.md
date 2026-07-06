@@ -16,6 +16,7 @@
 - **多模型接入**：Ollama（原生 `/api/chat`，NDJSON 自动转 OpenAI SSE）与任意 OpenAI Compatible 接口，前端只维护一种流解析
 - **移动端入口**：Android WebView 壳 + JS 桥接原生语音输入（STT）、语音播报（TTS）、文件选择、安全区适配
 - **长期记忆**：手动维护偏好/事实/项目记忆，按开关注入 Agent 上下文
+- **LLM 异步增强**：对话标题自动生成、回答后追问建议 chip（点击即问），失败静默不阻塞聊天
 - **全量持久化**：对话、配置、文件、知识库、向量、Agent 日志全部落 SQLite，重启不丢
 
 ## 界面预览
@@ -231,6 +232,7 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 - [x] MCP Server（知识库 + 工具暴露为标准 MCP 服务，Cursor 可直连）
 - [x] 检索自纠错（Grader 评估 + 有界重检索，开/关对照评测）
 - [x] Agent 联网搜索工具（ddgs 免 key，可选开关 + 优雅降级）
+- [x] LLM 对话标题生成 + 追问建议 chip（异步增强）
 - [ ] PostgreSQL + pgvector 可切换向量后端
 
 ## License

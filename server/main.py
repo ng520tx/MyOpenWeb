@@ -17,6 +17,7 @@ from server.routers import (
     knowledge,
     memories,
     models,
+    tasks,
 )
 
 
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
     app.include_router(memories.router)
     app.include_router(files.router)
     app.include_router(knowledge.router)
+    app.include_router(tasks.router)
 
     # Serve the built H5 when present (single-container deploy); API routes
     # above take precedence, everything else falls through to the SPA.

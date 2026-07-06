@@ -9,6 +9,7 @@ import { configureTTS, resetStreamTTS, feedStreamTTS, flushStreamTTS, stopTTS } 
 import { filterThinking } from '@/utils/thinking';
 import { syncProviderConfig } from '@/apis/config';
 import { saveChat } from '@/apis/chats';
+import { generateTitle, generateFollowUps } from '@/apis/tasks';
 
 export default function ChatPage() {
   const generating = useAppStore((s) => s.generating);
@@ -36,6 +37,7 @@ export default function ChatPage() {
 
       const store = useAppStore.getState();
       const files = store.pendingFiles.length > 0 ? [...store.pendingFiles] : undefined;
+      const isFirstTurn = (store.getActiveConversation()?.messages.length ?? 0) === 0;
 
       const userId = store.addMessage('user', text.trim(), files);
       store.clearPendingFiles();
@@ -135,6 +137,25 @@ export default function ChatPage() {
           }
         }
         abortRef.current = null;
+
+        // 异步增强（不阻塞主链路、失败静默）：LLM 标题替换截断标题 + 追问建议 chip。
+        const finished = useAppStore.getState().getActiveConversation();
+        const aiMessage = finished?.messages.find((m) => m.id === aiId);
+        if (finished && aiMessage?.done && !aiMessage.error && aiMessage.content) {
+          if (isFirstTurn) {
+            const convId = finished.id;
+            void generateTitle(settings.model, text.trim(), aiMessage.content).then((title) => {
+              if (!title) return;
+              useAppStore.getState().renameConversation(convId, title);
+              const renamed = useAppStore.getState().conversations.find((c) => c.id === convId);
+              if (renamed) void saveChat(renamed).catch(() => {});
+            });
+          }
+          void generateFollowUps(settings.model, finished.messages.slice(-4)).then((followUps) => {
+            if (followUps.length === 0) return;
+            useAppStore.getState().updateMessage(aiId, { followUps });
+          });
+        }
       }
     },
     [settings]
@@ -150,7 +171,7 @@ export default function ChatPage() {
   return (
     <div className="flex flex-col h-full">
       <ChatNavbar />
-      <MessageList messages={messages} generating={generating} />
+      <MessageList messages={messages} generating={generating} onFollowUpClick={handleSend} />
       <MessageInput
         onSend={handleSend}
         onStop={handleStop}
