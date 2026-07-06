@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>08 · 工程化：测试 / CI / Docker · MyOpenWeb 修炼手册</title>
+<link rel="stylesheet" href="assets/tutorial.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <main class="content">
+    <article class="article">
+
+      <div class="ch-head">
+        <div class="ch-eyebrow"><span class="badge">CH 08</span><span class="part">第三部分 · 工程与进阶</span></div>
+        <h1>工程化<br>—— pytest / CI / Docker 私有化</h1>
+        <p class="lede">这一章是你的主场：测试、CI、容器化你都懂，要补的只是「AI 应用怎么做这些」的特殊姿势——<b>LLM 不可控怎么写单测？模型服务怎么打进镜像？</b>答案分别是 mock 掉模型、以及不打进去。本章顺带把「优雅降级」这个贯穿全项目的工程哲学收拢成型。</p>
+        <div class="ch-meta"><span>预计 3 小时</span><span>难度 ★★☆☆☆</span><span>对应源码 server/tests/（12 个文件）、Dockerfile、.github/workflows/ci.yml</span></div>
+      </div>
+
+      <div class="goals">
+        <h2>学完本章你能</h2>
+        <ul>
+          <li>说清 AI 应用的测试策略：<b>确定性逻辑全测，LLM 边界 mock 掉</b></li>
+          <li>读懂 pytest 的 fixture / monkeypatch，对应到你熟悉的 Jest 概念</li>
+          <li>逐行解释<b>多阶段 Dockerfile</b>：为什么 Node 只在 Stage 1、镜像里没有模型</li>
+          <li>把「优雅降级」讲成一个体系而不是零散技巧</li>
+        </ul>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 8.1</span>AI 应用怎么写单测：mock 掉不确定性</h2>
+      <p>难题：核心链路里有个 LLM，输出每次都不一样，还得要 GPU/网络——按传统思路这代码「不可测」。解法是换个问题：<b>你要测的从来不是模型聪不聪明，而是你自己的代码对不对</b>。把系统切成两半：</p>
+      <table class="cmp-table">
+        <tr><th>确定性的一半（真测）</th><th>概率性的一半（mock 掉 / 交给评测）</th></tr>
+        <tr><td>切片算法、CJK 分词、RRF 融合排序、JSON 防御解析、工具白名单分发、SSE 帧组装、AST 计算器</td><td>模型生成的内容质量 → 第 7 章的评测集管；单测里模型被替换成「录音机」</td></tr>
+      </table>
+      <p>「录音机」怎么做？看 Agent 循环的真实测试——预设一段模型剧本，验证编排逻辑的每一步：</p>
+      <pre data-lang="python" data-path="server/tests/test_agent_streaming.py（真实代码，节选）">
+def _fake_completion_factory(responses: list[str]):
+    """按顺序回放预设的"模型台词"，形状和真实 completion 一致。"""
+    calls = {"count": 0}
+    async def fake(config, payload):
+        index = min(calls["count"], len(responses) - 1)
+        calls["count"] += 1
+        return {
+            "choices": [{"message": {"role": "assistant", "content": responses[index]}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+    return fake
+
+@pytest.mark.anyio
+async def test_run_agent_events_yields_progress_then_result(monkeypatch):
+    monkeypatch.setattr(agent_runner, "create_chat_completion_full",
+        _fake_completion_factory([
+            '{"tool_calls":[{"name":"calculator","parameters":{"expression":"6*7"}}]}',
+            '{"action":"final","answer":"结果是 42"}',
+        ]))
+
+    events = [...]   # 抽干生成器，收集全部事件
+    types = [event["type"] for event in events]
+    assert types == ["thinking", "tool_call", "tool_result", "thinking"]
+    assert result["answer"] == "结果是 42"
+    # 两轮模型调用、每轮15 token，验证跨轮usage累加逻辑
+    assert result["usage"] == {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30}</pre>
+      <div class="code-notes"><ul>
+        <li><code>monkeypatch.setattr</code> ≈ Jest 的 <code>jest.spyOn().mockImplementation()</code>：运行时把 <code>agent_runner</code> 模块里的模型调用函数换成假的，测试结束自动还原。</li>
+        <li>剧本第一句让模型「调计算器」，第二句「给最终答案」——于是循环的完整路径（决策→工具→回填→再决策→终止）被<b>确定性地</b>走了一遍。工具是真跑的（calculator 真算了 6*7），只有模型是假的。</li>
+        <li>断言到 usage 累加这种细节——第 3 章那个「流式 usage 丢帧」的坑，就是靠这类测试防回归的。</li>
+      </ul></div>
+      <p>再看测试的环境隔离（对应 Jest 的 setup 文件）：</p>
+      <pre data-lang="python" data-path="server/tests/conftest.py（真实代码，全文）">
+"""Test bootstrap: sandbox the SQLite data dir before any server import."""
+_TEST_DATA_DIR = tempfile.mkdtemp(prefix="myopenweb-test-")
+os.environ["MYOPENWEB_DATA_DIR"] = _TEST_DATA_DIR    # 必须在 import server 之前
+
+import pytest
+from server.db import init_db
+
+@pytest.fixture(scope="session", autouse=True)
+def _database() -> None:
+    init_db()</pre>
+      <div class="code-notes"><ul>
+        <li><code>conftest.py</code> 是 pytest 的约定文件（≈ Jest 的 setupFiles）：同目录所有测试自动加载。这里把数据目录指到临时文件夹——<b>测试永远不碰真实数据库</b>。注释里那句「must run first」是真实教训：<code>server.db</code> 在 import 时就解析路径，环境变量晚一步就白设了。</li>
+        <li><code>fixture</code> ≈ Jest 的 <code>beforeAll</code>，<code>scope="session"</code> 表示整个测试会话只跑一次，<code>autouse</code> 免去每个测试手动声明。</li>
+        <li>同样的沙箱思路复用到了评测（<code>MYOPENWEB_DATA_DIR=server/eval/.data</code>）和 Docker（<code>/data</code> 卷）——<b>一个环境变量，三处受益</b>，这是第 2 章分层里 db.py 预留的接缝。</li>
+      </ul></div>
+
+      <h2 class="sec-t"><span class="no">SECTION 8.2</span>CI：GitHub Actions 双车道</h2>
+      <pre data-lang="bash" data-path=".github/workflows/ci.yml（真实配置，摘要）">
+on: push/PR → main
+
+jobs:
+  backend:                      # 车道1：后端
+    - setup-python 3.12 (cache: pip)
+    - pip install -r server/requirements-dev.txt
+    - python -m pytest server/tests -q        # 全部单测，无外部依赖
+
+  frontend:                     # 车道2：前端
+    - pnpm install --frozen-lockfile
+    - pnpm build                              # tsc 类型检查 + vite 构建</pre>
+      <div class="code-notes"><ul>
+        <li>两个 job <b>并行</b>互不阻塞。后端车道能在 CI 裸容器里跑通的前提正是 8.1 的设计：测试不需要 Ollama、不需要 GPU、不需要网络——<b>可 mock 的边界 = 可 CI 的系统</b>。</li>
+        <li>前端车道 <code>pnpm build</code> 隐含 <code>tsc</code>——类型错误挡在合并前，等价于一层静态测试。<code>--frozen-lockfile</code> 保证依赖和本地完全一致（你熟）。</li>
+        <li>面试一句话：「每次 push，12 个测试文件 + 前端类型检查全绿才算数——AI 项目也按正经软件工程来。」</li>
+      </ul></div>
+
+      <h2 class="sec-t"><span class="no">SECTION 8.3</span>Docker：多阶段构建与「模型不进镜像」</h2>
+      <pre data-lang="bash" data-path="Dockerfile（真实文件，全文注解）">
+# ─── Stage 1: 构建 H5 前端（这一阶段最终会被丢弃）───
+FROM node:18-alpine AS web
+WORKDIR /app
+RUN npm install -g pnpm@10
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile     # 先拷清单再装依赖：层缓存关键手法
+COPY index.html vite.config.ts tsconfig.json ... ./
+COPY src ./src
+RUN pnpm build                         # 产出 dist/
+
+# ─── Stage 2: 运行时（最终镜像只有这一层）───
+FROM python:3.12-slim
+WORKDIR /app
+COPY server/requirements.txt ./server/requirements.txt
+RUN pip install --no-cache-dir -r server/requirements.txt
+COPY server ./server
+COPY --from=web /app/dist ./dist       # 只把构建产物搬过来，Node 整套不带
+
+ENV MYOPENWEB_DATA_DIR=/data           # 所有持久状态收敛到一个可挂载目录
+VOLUME /data
+EXPOSE 8000
+CMD ["uvicorn", "server.main:app", "--host", "0.0.0.0", "--port", "8000"]</pre>
+      <div class="code-notes"><ul>
+        <li><b>多阶段</b>：Stage 1 用 Node 镜像编译前端，Stage 2 只 <code>COPY --from=web</code> 拿走 dist——最终镜像里没有 node_modules、没有 Node 运行时，体积从 1GB+ 降到几百 MB。</li>
+        <li><b>层缓存</b>：先 COPY 依赖清单、RUN install，再 COPY 源码——改业务代码不触发依赖重装，重构建从几分钟降到几十秒。和你前端 CI 缓存 node_modules 是同一个心智。</li>
+        <li><b>单容器 = API + 前端</b>：第 2 章 main.py 那段 StaticFiles 挂载在这里闭环——API 路由优先、其余落 SPA，一个镜像交付整个产品。</li>
+        <li><b>状态外置</b>：SQLite + 上传文件全在 <code>/data</code> 卷里，容器可随意销毁重建——十二要素应用的「无状态进程」原则。</li>
+      </ul></div>
+      <div class="keypoint">
+        <div class="tag">为什么模型不进镜像</div>
+        <p>三个理由：模型权重动辄几 GB，镜像会失控；模型升级频率和代码不同步，耦合发布是灾难；GPU 驱动/推理框架的兼容矩阵复杂，交给专门的 Ollama 容器/服务。所以 compose 里应用容器通过 <code>PROVIDER_BASE_URL</code> 环境变量指向模型服务——<b>模型是外部依赖，和数据库同级</b>。这也正是 providers.py 协议归一在部署层的回报：模型服务随便换，应用镜像不动。</p>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 8.4</span>收拢一个主题：优雅降级的工程哲学</h2>
+      <p>回看全书，「挂了怎么办」在每一层都有同一个答案——<b>降级继续跑，别把整条链路拖死</b>：</p>
+      <table class="cmp-table">
+        <tr><th>场景</th><th>降级行为</th><th>出处</th></tr>
+        <tr><td>SQLite 没编译 FTS5</td><td>混合检索退回纯向量</td><td>db.py <code>_init_fts</code>（第 2 章）</td></tr>
+        <tr><td>rerank 权重加载失败</td><td>返回 None，沿用 RRF 粗排</td><td>rag.py（第 4 章）</td></tr>
+        <tr><td>WSL 里 localhost 不通</td><td>探测网关生成候选配置重试</td><td>providers.py（第 3 章）</td></tr>
+        <tr><td>Agent 输出的 JSON 解析失败</td><td>原文当最终答案返回</td><td>agent_runner.py（第 5 章）</td></tr>
+        <tr><td>工具执行抛错</td><td>错误回填给模型自我修正</td><td>agent_runner.py（第 5 章）</td></tr>
+        <tr><td>检索结果为空</td><td>切换拒答 prompt，不裸答</td><td>rag.py（第 4 章）</td></tr>
+        <tr><td>LLM 标题/追问生成失败</td><td>静默跳过，不影响主对话</td><td>llm_tasks.py</td></tr>
+      </table>
+      <p>面试收拢话术：「AI 应用的依赖天生不稳定——模型会超时、权重会缺失、输出会不合法。我的原则是<b>每个增强能力都是可降级的插件，核心链路（问答）在任何单点故障下保持可用</b>。」一张表七个例子，比任何形容词都有力。</p>
+
+      <div class="try-it">
+        <div class="tag">动手实验 · 跑测试 + 起容器</div>
+        <pre data-lang="bash" data-path="WSL 终端 · 项目根目录">
+# ① 全量单测（十几秒，无需 Ollama）
+./.venv/bin/python -m pytest server/tests -q
+
+# ② 单容器起整个产品（API + 前端）
+docker compose up -d --build
+curl -s http://localhost:8000/api/health     # {"status":"ok"}
+# 浏览器开 http://localhost:8000 就是完整前端
+
+# ③ 验证状态外置：销毁容器重建，聊天记录还在（在 /data 卷里）
+docker compose down && docker compose up -d
+</pre>
+      </div>
+
+      <div class="iv-zone">
+        <div class="zone-head"><span class="ic">面</span><h2>面试官视角 · 本章问答</h2><span class="cnt"></span></div>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q1</span>LLM 应用的输出不确定，你怎么写测试？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「把系统切成确定性和概率性两半。确定性的（切片、RRF 排序、JSON 解析、工具分发、SSE 组帧）占代码量大头，正常单测；模型调用在测试里用 monkeypatch 换成剧本回放的 stub——形状和真实响应一致，内容预设。这样 Agent 循环的『决策→工具→回填→终止』全路径可以确定性验证，包括 usage 累加、错误回填这些细节。模型『答得好不好』不归单测管，归第 7 章的评测集管。12 个测试文件在 CI 裸容器里跑，零外部依赖。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q2</span>讲讲你的 Docker 部署方案，为什么这么设计？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「多阶段构建：Node 阶段编译 H5，运行时阶段只拿 dist，最终镜像是 python-slim + 后端 + 静态产物，没有 Node。API 和前端一个容器交付——FastAPI 挂 StaticFiles，API 路由优先、其余落 SPA，内网私有化场景一个 <code>docker compose up</code> 起完。状态全部收敛到 /data 卷（SQLite + 上传文件），容器无状态可随意重建。模型不进镜像，通过环境变量指向外部 Ollama/vLLM 服务——权重体积、升级节奏、GPU 兼容都和应用解耦。」</p>
+            <p class="followup">追问预判：「为什么不前后端分两个容器 + nginx？」→ 答：单用户内网工具，一个容器是运维成本最低的交付形态；规模化时 dist 丢 CDN/nginx、后端横向扩，架构上已经是分开的（前端纯静态），拆分是零改动的。</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q3</span>什么是优雅降级？举你项目里的例子。<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「增强能力失效时系统退到基础能力继续服务，而不是报错终止。我的项目里成体系：rerank 权重缺失→沿用 RRF 粗排；FTS5 不可用→纯向量检索；Agent JSON 解析失败→原文当答案；工具抛错→错误回填让模型修正；检索为空→切拒答 prompt。设计模式是统一的：<b>增强层返回 None/错误信号，调用方判空走基线路径</b>——每个 AI 能力都是可拔插件，核心问答链路在任何单点故障下可用。AI 应用的依赖（模型、权重、网络）天生比传统服务不稳定，降级不是可选项而是默认设计。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q4</span>你的 CI 里为什么不跑评测集？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「评测要真模型（Ollama + bge-m3 + 生成模型），CI 裸容器没有 GPU 也不该拉几个 GB 的权重——所以分层：<b>CI 管确定性</b>（单测 + 类型检查，秒级、每次 push）；<b>评测管质量</b>（本地/专用机器手动或定时触发，分钟级、改检索相关代码时跑）。这也是业界主流分法：质量回归做成 nightly job 或发布前门禁，而不是塞进每次 commit 的 CI。如果公司有 GPU runner，我会把小评测集挂到 PR 门禁上，大集 nightly。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q5</span>SQLite 用在生产靠谱吗？什么时候必须换？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「看负载形态。我的场景——内网单用户/小团队工作台，读多写少、并发个位数——SQLite 是最优解：零运维、零网络开销、备份就是拷文件，还白送 FTS5 全文检索。必须换的信号：多实例部署（SQLite 是进程内库，无法跨机共享写）、写并发上百、需要行级权限。演进路径在架构里预留了：仓储层隔离了全部 SQL，换 PostgreSQL 只动 repositories/，顺路上 pgvector 把向量检索也收进数据库。技术选型答『匹配当前约束 + 预留演进路径』永远比报菜名强。」</p>
+          </div>
+        </details>
+      </div>
+
+      <div class="recap">
+        <div class="r-head">本章小结 · 装进口袋的 5 句话</div>
+        <div class="r-body"><ul>
+          <li>AI 应用测试 = <b>确定性逻辑真测 + LLM 边界 mock 成剧本回放</b>；质量归评测，正确归单测。</li>
+          <li><code>conftest.py</code> 沙箱数据目录 ≈ Jest setupFiles；monkeypatch ≈ mockImplementation。</li>
+          <li>CI 双车道并行：pytest 全绿 + tsc/vite 构建通过才能合并；可 mock 的边界 = 可 CI 的系统。</li>
+          <li>Docker 多阶段：Node 只在构建期，镜像无 node_modules；状态收敛 /data 卷；<b>模型是外部依赖不进镜像</b>。</li>
+          <li>优雅降级是体系不是技巧：七处降级一个模式——增强层可拔插，核心链路永远可用。</li>
+        </ul></div>
+      </div>
+
+      <div class="ch-nav" data-auto></div>
+    </article>
+  </main>
+</div>
+<script src="assets/tutorial.js"></script>
+</body>
+</html>

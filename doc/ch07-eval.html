@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>07 · 评测体系与 LLMOps · MyOpenWeb 修炼手册</title>
+<link rel="stylesheet" href="assets/tutorial.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <main class="content">
+    <article class="article">
+
+      <div class="ch-head">
+        <div class="ch-eyebrow"><span class="badge">CH 07</span><span class="part">第三部分 · 工程与进阶</span></div>
+        <h1>评测体系与 LLMOps<br>—— 用数据说话</h1>
+        <p class="lede">会调 API 的人千千万，<b>能回答「我的改动让系统变好了多少」的人非常少</b>——这是你和其他转型者拉开差距的地方。这一章讲 Hit@K / MRR 的手算原理、评测集怎么设计、LLM-as-judge 怎么用小模型评生成质量，以及 token 用量从上游到落库的全链路观测。所有数字都来自你仓库里真实的评测报告。</p>
+        <div class="ch-meta"><span>预计 4 小时</span><span>难度 ★★★☆☆</span><span>对应源码 server/eval/（9 个脚本 + 4 份报告）、agent_runs 落库</span></div>
+      </div>
+
+      <div class="goals">
+        <h2>学完本章你能</h2>
+        <ul>
+          <li>手算一遍 <b>Hit@K 和 MRR</b>，并解释两者分别回答什么问题</li>
+          <li>说清评测集的设计方法：<b>标准集 / 多轮集 / 困难集</b>各自的靶心</li>
+          <li>解释 <b>LLM-as-judge</b> 的原理、为什么生成与评审要分离、它的局限</li>
+          <li>讲清 token usage 的全链路：请求参数 → SSE 帧 → 前端展示 → 数据库落账</li>
+        </ul>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 7.1</span>为什么评测是转型者的护城河</h2>
+      <p>AI 应用的特殊性：<b>输出是概率性的</b>，肉眼看几个 case「感觉不错」毫无说服力——换一批问题、换个模型、改个 chunk_size，质量可能悄悄塌方。没有评测的改进是盲飞：你上了 rerank，延迟涨了 7 倍，质量涨了多少？说不出数字，这个决策就是拍脑袋。</p>
+      <div class="analogy">
+        <div class="tag">前端类比</div>
+        <p>评测集之于 RAG，就是单测 + 性能基线之于前端：改代码前跑一遍 Lighthouse 留基线，改完再跑对比——「FCP 从 2.1s 降到 1.4s」比「感觉快了」专业一万倍。RAG 评测同理：<b>固定数据集 + 固定指标 + 每次改动前后各跑一遍</b>。你已经有这个工程习惯，只是换了指标名。</p>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 7.2</span>检索评测：Hit@K 与 MRR 手算</h2>
+      <p>检索系统的每次查询返回一个<b>有序列表</b>，评测就是问两个问题：<b>找到了吗</b>（Hit@K）、<b>排得靠前吗</b>（MRR）。用 3 条查询手算一遍：</p>
+      <pre data-lang="python" data-path="纸上手算：3 条查询的检索结果">
+# 每条查询检回 top4，✓ 表示该位置的片段是正确答案
+查询A: [✓, ·, ·, ·]     # 正确片段排第 1
+查询B: [·, ·, ✓, ·]     # 正确片段排第 3
+查询C: [·, ·, ·, ·]     # 没检到
+
+Hit@1 = 命中且排进前1的比例 = 1/3 ≈ 0.33   # 只有A
+Hit@4 = 命中且排进前4的比例 = 2/3 ≈ 0.67   # A和B
+MRR   = 平均(1/首个命中名次) = (1/1 + 1/3 + 0) / 3 ≈ 0.44</pre>
+      <div class="code-notes"><ul>
+        <li><b>Hit@K 回答「够不够用」</b>：RAG 里资料只要进了 top_k 就会被塞进 prompt，所以 Hit@4 直接对应「模型手上有没有正确资料」。</li>
+        <li><b>MRR 回答「排序质量」</b>：排第 1 得 1 分、第 3 只得 0.33 分、没中 0 分。两个系统 Hit@4 都是 0.9，MRR 高的那个把答案排得更靠前——窗口紧张时可以把 top_k 从 4 降到 2 而不掉质量。</li>
+      </ul></div>
+      <p>对应到真实代码，核心不过 15 行：</p>
+      <pre data-lang="python" data-path="server/eval/run_eval.py（真实代码，节选）">
+first_hit_rank = None
+for rank, chunk in enumerate(chunks, start=1):
+    if is_relevant(chunk["content"], item["expect"]):   # 包含期望关键串即命中
+        first_hit_rank = rank
+        break
+
+reciprocal_ranks.append(1.0 / first_hit_rank if first_hit_rank else 0.0)
+for k in HIT_LEVELS:                                    # (1, 4, 8)
+    if first_hit_rank is not None and first_hit_rank <= k:
+        hits[k] += 1
+
+# 汇总还带延迟分位数——质量和性能一张表看
+return {
+    **{f"hit@{k}": hits[k] / total for k in HIT_LEVELS},
+    "mrr": statistics.mean(reciprocal_ranks),
+    "avg_ms": statistics.mean(latencies),
+    "p95_ms": latencies_sorted[p95_index],
+}</pre>
+      <div class="code-notes"><ul>
+        <li>命中判定 <code>is_relevant</code> 用「片段包含期望关键串」近似 gold 标注——40 条数据集的务实做法，报告里也明确写了这个局限（宽松召回，规模上来后换人工标注）。<b>知道自己评测的局限并写出来</b>，是评测素养的一部分。</li>
+        <li>延迟统计 avg + <b>p95</b>：LLM 应用延迟分布长尾严重，均值会骗人——这是你做前端性能监控时就懂的道理。</li>
+      </ul></div>
+
+      <h3>真实结果怎么读（这张表值得背下来）</h3>
+      <p>你仓库 <code>server/eval/results.md</code> 的真实数据（40 条 QA、3 篇语料、bge-m3）：</p>
+      <table class="cmp-table">
+        <tr><th>chunk_size</th><th>检索模式</th><th>Hit@1</th><th>Hit@4</th><th>MRR</th><th>平均耗时</th></tr>
+        <tr><td>600</td><td>vector</td><td>0.82</td><td>0.97</td><td>0.887</td><td>675 ms</td></tr>
+        <tr><td>600</td><td class="y">hybrid</td><td class="y">0.93</td><td>0.97</td><td class="y">0.955</td><td>736 ms</td></tr>
+        <tr><td>600</td><td>hybrid+rerank</td><td>1.00</td><td>1.00</td><td>1.000</td><td class="y">5245 ms（CPU）</td></tr>
+      </table>
+      <ul>
+        <li><b>hybrid vs vector</b>：Hit@1 提 11 个点、耗时只加 60ms——BM25 融合是「近乎免费的午餐」，默认开。</li>
+        <li><b>rerank</b>：质量拉满但 CPU 推理耗时 7 倍——所以做成开关，质量优先场景/离线链路才开。<b>一张表讲清一个 trade-off 决策</b>，这就是面试里「工程判断力」的具象化。</li>
+        <li>chunk_size 400/600/800 三组对比里 600 综合最优——第 4 章说的「600 是评测调出来的」证据就在这。</li>
+      </ul>
+
+      <h2 class="sec-t"><span class="no">SECTION 7.3</span>评测集设计：三套数据集各打一个靶</h2>
+      <table class="cmp-table">
+        <tr><th>数据集</th><th>规模</th><th>靶心</th><th>示例题</th></tr>
+        <tr><td><code>dataset.jsonl</code> 标准集</td><td>40 条</td><td>整体检索质量基线；参数对比（chunk/模式/rerank）</td><td>「MySQL 主从延迟的告警阈值是多少？」</td></tr>
+        <tr><td><code>multiturn.jsonl</code> 多轮集</td><td>—</td><td>query rewrite 有效性：带指代的追问</td><td>先问 Redis 配置，再问「<b>那它</b>的默认端口呢」</td></tr>
+        <tr><td><code>hard.jsonl</code> 困难集</td><td>—</td><td>Agentic 自纠错的收益：首轮容易检偏的模糊表述</td><td>不含文档关键词的口语化改述</td></tr>
+      </table>
+      <div class="keypoint">
+        <div class="tag">设计心法</div>
+        <p>每个新特性配一套<b>专打它的数据集</b>：rewrite 用多轮集验证（标准集测不出它的价值），Grader 自纠错用困难集验证（标准集上首轮命中率已 0.97，没有纠错空间）。「特性 → 专属靶子 → 前后对照」三板斧，任何 AI 特性的价值都能量化。数据格式极简：<code>{"query": "...", "expect": ["关键串1", "关键串2"]}</code>，一行一条 JSONL。</p>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 7.4</span>生成评测：LLM-as-judge</h2>
+      <p>检索准了，回答就一定好吗？不一定——模型可能拿着对的资料仍然编造、夹带私货、答非所问。生成质量没法用关键串匹配打分，业界方案是 <b>LLM-as-judge</b>：让另一个模型当阅卷老师，对「问题 + 检索资料 + 回答」按维度打 1–5 分。本项目自研了零依赖实现（对齐 RAGAS 的两个核心维度）：</p>
+      <ul>
+        <li><b>Faithfulness 忠实度</b>：回答是否只依据资料？编造、夹带资料外内容扣分；资料没命中时明确拒答记满分（拒答是美德）。</li>
+        <li><b>Answer Relevancy 相关性</b>：回答是否正面回应了问题？跑题、避重就轻扣分。</li>
+      </ul>
+      <p>真实报告（<code>results-judge.md</code>，12 条抽样）：Faithfulness 平均 <b>4.00</b>，Relevancy 平均 <b>4.17</b>。比分数更有价值的是低分明细——比如某条 3 分的评审理由：「回答准确引用了默认值，但直接复用了资料中关于慢查询排查的步骤，属于夹带少量无关内容」。<b>低分样例就是下一轮 prompt 优化的 backlog</b>。</p>
+      <div class="pitfall">
+        <div class="tag">judge 的三个坑（面试必被追问）</div>
+        <p>① <b>自评偏好</b>：模型给自家输出打分偏高——所以本项目生成用 qwen2.5:3b、评审用 qwen3.5:4b，<b>生成与评审分离</b>；② <b>随机性</b>：评审也是 LLM，temperature 设 0 且同一批样本重跑校验稳定性；③ <b>小模型噪声</b>：报告里明确写了局限——生产建议用更强的评审模型 + 扩大样本 + 低分人工复核。承认局限比吹嘘数字更显专业。</p>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 7.5</span>LLMOps 最小闭环：token 用量与 tracing</h2>
+      <p>LLMOps 听起来吓人，最小闭环就三件事：<b>每次调用花了多少 token（成本）、走了哪些步骤（tracing）、质量有没有退化（评测，上面已讲）</b>。前两件在本项目的实现：</p>
+      <h3>token 用量：从上游到屏幕的四站</h3>
+      <ol>
+        <li><b>要数据</b>：OpenAI 兼容流式必须传 <code>stream_options: {"include_usage": true}</code>（<code>_build_openai_body</code>）；Ollama 原生的 <code>eval_count</code> 由 <code>_ollama_usage</code> 改名归一成 OpenAI 形状——两种上游一个口径。</li>
+        <li><b>过管道</b>：usage 作为 finish 之后的额外一帧混入 SSE 流；前端解析器要等到 <code>[DONE]</code> 才收尾（不能见 finish_reason 就 break，否则丢帧——真实踩坑）。</li>
+        <li><b>见用户</b>：消息气泡底部渲染 <code>↑156 ↓89 tokens · 3.2s</code>（<code>MessageBubble.tsx</code>），用量和耗时可感知。</li>
+        <li><b>落账本</b>：Agent 每轮的 round_usage 记进 <code>agent_steps.output_json</code>，跨轮累加的 total_usage 随最终结果返回——事后可按 run 聚合分析成本。</li>
+      </ol>
+      <h3>tracing：agent_runs / agent_steps 两张表</h3>
+      <pre data-lang="sql" data-path="线上问题复盘的真实查询姿势">
+-- "刚才那次 Agent 为什么答错了？" —— 翻出它每一步的决策原文
+SELECT step_index, type, name,
+       json_extract(output_json, '$.decision') AS decision,
+       json_extract(output_json, '$.usage.total_tokens') AS tokens
+FROM agent_steps
+WHERE run_id = (SELECT id FROM agent_runs ORDER BY created_at DESC LIMIT 1)
+ORDER BY step_index;</pre>
+      <div class="code-notes"><ul>
+        <li>每步存了模型的<b>原始输出 raw</b>（不止解析后的 decision）——解析器出 bug 时也能看到模型到底说了什么。tracing 的第一原则：存原始数据，加工可以重做，原始丢了就没了。</li>
+        <li>这就是 LangSmith / Langfuse 这类商业 tracing 平台的最小自研版。面试说法：「我理解 tracing 要解决什么，也知道规模化时该换专业平台——但我先用两张表让自己的系统先可观测起来。」</li>
+      </ul></div>
+
+      <div class="try-it">
+        <div class="tag">动手实验 · 跑一遍完整评测</div>
+        <pre data-lang="bash" data-path="WSL 终端 · 项目根目录（Ollama 需在跑）">
+# 标准检索评测：三种模式对比，结果写进 results.md
+MYOPENWEB_DATA_DIR=server/eval/.data \
+  ./.venv/bin/python -m server.eval.run_eval --chunk-sizes 600
+
+# LLM-as-judge 生成质量评测（要跑十几分钟，小模型逐条生成+评审）
+MYOPENWEB_DATA_DIR=server/eval/.data \
+  ./.venv/bin/python -m server.eval.run_judge_eval</pre>
+        <p class="muted">改一个参数（比如 --chunk-sizes 400,600,800）重跑，亲眼看指标怎么动——「跑过评测」和「读过评测」是两种面试状态。</p>
+      </div>
+
+      <div class="iv-zone">
+        <div class="zone-head"><span class="ic">面</span><h2>面试官视角 · 本章问答</h2><span class="cnt"></span></div>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q1</span>你的 RAG 效果怎么样？怎么证明？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「用数字答：40 条 QA 评测集上，chunk_size=600 时纯向量 Hit@1 0.82 / MRR 0.887；开混合检索升到 0.93 / 0.955，延迟只加 60ms；再开 rerank 到 1.00 / 1.000，但 CPU 推理延迟 7 倍，所以 rerank 做成场景开关。生成侧 LLM-as-judge 评了忠实度 4.0、相关性 4.17（5 分制）。评测脚本和报告都在仓库里可复现。」——先给数字再给方法，面试官的追问会自动进入你熟悉的领域。</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q2</span>Hit@K 和 MRR 有什么区别？为什么两个都要？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「Hit@K 是二值命中率：正确资料进没进前 K，直接对应 RAG『模型手上有没有料』；MRR 看首个命中的名次倒数，衡量排序质量。两个都要因为它们解耦了两类问题：Hit@4 一样的两个系统，MRR 高的排序更好，意味着可以用更小的 top_k 省上下文窗口；反过来 MRR 不错但 Hit@8 低，说明召回有死角，该查语料覆盖而不是调排序。指标选择映射到不同的改进动作，这才是指标的意义。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q3</span>LLM-as-judge 靠谱吗？你怎么控制它的偏差？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「不完全靠谱，但比『肉眼看几个 case』靠谱得多，且可规模化。我的控制手段：生成与评审模型分离（降低自评偏好）；评审 temperature=0；评分带理由输出（可人工抽查评审本身的质量）；报告里明确标注局限。生产化升级路径：更强的评审模型、评审集校准（人工标一小批 gold 对齐 judge 与人类的一致率）、低分样例强制人工复核。judge 是过滤器不是终审——它把需要人看的样本从 1000 条筛到 50 条。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q4</span>评测数据集怎么构建的？多少条才够？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「从真实语料出发人工出题：三篇运维/API 文档出 40 条 QA，每条带期望关键串做命中判定。规模答『看用途』：参数对比（A/B 同一数据集比相对值）40 条已能看出稳定趋势；要报绝对指标给业务方看，需要几百条 + 人工标注。我还按特性建了专属子集：多轮指代集测 query rewrite、困难改述集测检索自纠错——特性专属靶子比大而全的数据集更能暴露问题。数据集也进版本库，改语料要同步改数据集，和单测同等待遇。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q5</span>你说的 LLMOps 具体指什么？你做了哪些？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「LLMOps = 把 LLM 应用当生产系统运营的那套实践：成本观测、调用追踪、质量回归、配置管理。我做的最小闭环：<b>成本</b>——token usage 全链路（两种上游归一计量、SSE 传帧、前端展示、按轮落库）；<b>追踪</b>——agent_runs/agent_steps 两张表存每步决策原文与工具结果，线上问题可复盘；<b>质量</b>——三套评测集 + LLM-as-judge，改动前后跑分。没做的也清楚：告警、A/B 分流、prompt 版本管理，规模上来会引 Langfuse 这类平台。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q6</span>线上怎么发现 RAG 质量退化？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「分离线和在线两层。<b>离线回归</b>：语料更新、模型升级、参数调整时强制跑评测集，指标掉了不上线——相当于 CI 里的测试门禁。<b>在线信号</b>：我目前有的是检索分数分布和拒答率（拒答率突增常意味着索引坏了或语料缺失）、agent_steps 里的工具失败率；可以补的是用户显式反馈（点踩）和抽样送 judge。核心思想是把『质量』变成可监控的时间序列，而不是等用户投诉。」</p>
+          </div>
+        </details>
+      </div>
+
+      <div class="recap">
+        <div class="r-head">本章小结 · 装进口袋的 6 句话</div>
+        <div class="r-body"><ul>
+          <li>AI 输出是概率性的，<b>没有评测的改进是盲飞</b>；评测集 = AI 应用的单测 + 性能基线。</li>
+          <li>Hit@K 答「找到没」，MRR 答「排得好不好」，两者映射不同的改进动作。</li>
+          <li>真实数据背三个：hybrid 几乎免费提 11 个点；rerank 质量拉满但 CPU 慢 7 倍所以做开关；600 是三组对比选出来的。</li>
+          <li>每个特性配专属靶子：rewrite→多轮集，自纠错→困难集。</li>
+          <li>LLM-as-judge：生成评审分离 + temperature 0 + 带理由输出 + 承认局限。</li>
+          <li>LLMOps 最小闭环 = usage 计量 + 两张表 tracing + 评测回归，先可观测再谈平台。</li>
+        </ul></div>
+      </div>
+
+      <div class="ch-nav" data-auto></div>
+    </article>
+  </main>
+</div>
+<script src="assets/tutorial.js"></script>
+</body>
+</html>

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>09 · 精进路线与生态地图 · MyOpenWeb 修炼手册</title>
+<link rel="stylesheet" href="assets/tutorial.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <main class="content">
+    <article class="article">
+
+      <div class="ch-head">
+        <div class="ch-eyebrow"><span class="badge">CH 09</span><span class="part">第三部分 · 工程与进阶</span></div>
+        <h1>精进路线与生态地图<br>—— 从「会用」到「专家」</h1>
+        <p class="lede">前 8 章把你的项目吃透了；这一章把视野拉到整个行业：2026 年的框架生态怎么选、RAG 前沿走到了哪、你的项目对照生产标准还差什么、以及一份按 3/6/12 个月排期的精进计划。所有生态信息基于 2026 年年中的公开资料检索。</p>
+        <div class="ch-meta"><span>预计 3 小时 + 长期执行</span><span>难度 ★★★☆☆</span><span>联网检索时间 2026-07</span></div>
+      </div>
+
+      <div class="goals">
+        <h2>学完本章你能</h2>
+        <ul>
+          <li>画出 2026 <b>Agent 框架生态地图</b>并说清各自的适用位置</li>
+          <li>回答「为什么自研不用框架」以及「上框架时你会选哪个」</li>
+          <li>说出 RAG 的 2026 前沿方向：<b>GraphRAG / CRAG / 多模态 / 路由分流</b></li>
+          <li>拿到一份可执行的 <b>3 / 6 / 12 个月</b>精进清单和资源书签</li>
+        </ul>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 9.1</span>先定位：市场要什么样的人</h2>
+      <p>2026 年招聘市场的三个信号（来自公开岗位数据分析）对你都是利好：</p>
+      <ul>
+        <li><b>78% 的 AI 应用岗面向 5 年以上经验的工程师</b>——行业要的不是应届算法生，而是「工程功底扎实 + 会用 LLM 构建系统」的人。你 19 年的工程经验是入场券而不是包袱。</li>
+        <li><b>RAG 出现在约 18% 的企业岗位 JD 里</b>，prompt 工程需求年增 227%——你项目的主线能力正是市场主流需求。</li>
+        <li><b>不需要模型训练背景</b>：AI 应用工程师（AI Engineer）用预训练模型 API 构建产品，与研究岗（炼模型）是两条职业线。别被「不会炼丹」吓退，岗位画像里根本没有这一项。</li>
+      </ul>
+      <div class="keypoint">
+        <div class="tag">你的定位公式</div>
+        <p>「资深工程师 × AI 应用能力」的交集人群在 2026 年仍然稀缺。面试叙事永远从这个交集讲：<b>不是「我转行学了个新东西」，而是「我把 19 年的工程方法论应用到了 AI 应用这个新领域」</b>——分层、测试、评测、降级、可观测，全是你的旧武器打的新仗。</p>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 9.2</span>框架生态地图：2026 年年中版</h2>
+      <p>你的项目零框架自研，这是<b>理解原理的最佳路径</b>；但生产团队大多用框架，面试必聊。2026 年的格局：</p>
+      <table class="cmp-table">
+        <tr><th>框架</th><th>心智模型</th><th>2026 状态</th><th>适用</th></tr>
+        <tr><td class="y">LangGraph</td><td>Agent = 状态图（节点做事，边按状态路由）</td><td>v1.0（2025 末），LangChain 官方生产运行时，月下载 3400 万+，企业事实标准</td><td>生产级复杂工作流：checkpoint 断点恢复、human-in-the-loop interrupt、LangSmith 全链路观测</td></tr>
+        <tr><td>CrewAI</td><td>Agent = 一支分工团队（role/goal/tools）</td><td>独立生态，GitHub 52k+ stars，v1.10 加 MCP 与 A2A 协议支持</td><td>快速原型、角色协作型任务（研究/内容流水线）；生产深度弱于 LangGraph</td></tr>
+        <tr><td>AutoGen 系</td><td>Agent = 群聊参与者（对话式协作）</td><td><b>2026 分裂</b>：社区版 AG2 + 微软官方 Microsoft Agent Framework 1.0 GA（2026-04，合并 Semantic Kernel）</td><td>Azure/.NET 系企业选 MS Agent Framework；新项目一般不选 AG2</td></tr>
+        <tr><td>OpenAI Agents SDK</td><td>隐式循环 + handoff 转交</td><td>官方 SDK，内置 tracing</td><td>OpenAI 生态内的轻量编排</td></tr>
+        <tr><td>Dify</td><td>可视化低代码平台</td><td>GitHub 144k stars（星数第一）</td><td>非工程团队快速搭建；工程师岗位价值有限</td></tr>
+        <tr><td>Smolagents / Pydantic AI</td><td>极简单 Agent / 类型安全 Agent</td><td>HF 生态 / 新兴</td><td>轻量单 Agent、类型控团队</td></tr>
+      </table>
+      <div class="analogy">
+        <div class="tag">前端类比</div>
+        <p>这张图就是 2015 年的前端框架大战：LangGraph ≈ React（生态最大、生产标准）、CrewAI ≈ Vue（上手快、心智友好）、MS Agent Framework ≈ Angular（企业套件、微软系）、Dify ≈ 建站工具。你当年怎么判断框架的（生态、可控性、逃生通道），现在原样适用。而且结论也一样：<b>懂原理的人换框架是一周的事，只会框架的人换框架是重学一遍</b>。</p>
+      </div>
+      <p><b>你的口径</b>（面试可直接用）：「我自研是为了把检索和工具循环的每一层打成白盒，事实证明有效——我能讲清 RRF 常数、AST 白名单这个级别的细节。生产上如果团队用 LangGraph 我拥抱它：我的 run_agent_events 生成器本质就是它的状态图节点循环的手写版，概念一一对应（state=messages、node=决策/工具、checkpoint=agent_steps 落库），迁移成本是语法不是概念。我也实际跑过 LangGraph 的双工具示例（仓库 examples 里有）。」</p>
+
+      <h2 class="sec-t"><span class="no">SECTION 9.3</span>RAG 前沿：2026 年生产界的共识与新边界</h2>
+      <p>2026 年中的行业共识（多份生产实践指南交叉验证）：</p>
+      <ul>
+        <li><b>「单向量索引 + top-k」的裸 RAG 已死</b>：真实企业语料上检索失败率高达 40%，不再是任何认真场景的参考架构。生产默认栈 = <b>混合检索（BM25+向量）→ rerank（宽召回精排）→ 带引用生成</b>——恭喜，这正是你项目已经实现的全套。</li>
+        <li><b>Agentic RAG 是「升级」不是「默认」</b>：业界口径与你的实现完全一致——先跑线性管道、评测找到失败的查询类别、只对那些类别引入模型参与的检索决策。你的 Grader 有界补检正是这个哲学。</li>
+        <li><b>CRAG（Corrective RAG）成为标准词汇</b>：先给检索结果打分、不合格就改写重检——你项目的「检索自纠错」就是 CRAG 思想的实现，面试请主动用这个术语。</li>
+      </ul>
+      <p>接下来的三个新边界，是你「下一个项目迭代」的候选方向：</p>
+      <table class="cmp-table">
+        <tr><th>方向</th><th>解决什么</th><th>2026 状态</th><th>落到你项目</th></tr>
+        <tr><td class="y">GraphRAG</td><td>跨文档综合题（「总结这 200 份合同的共同风险」）——单片检索天然答不了</td><td>微软开源实现成熟；生产模式是<b>路由分流</b>：小分类器把「点查题」发向量 RAG、「综合题」发图 RAG</td><td>从运维文档抽取实体关系（服务→依赖→告警）建轻量图，先做「服务依赖问答」一个场景</td></tr>
+        <tr><td>多模态 RAG</td><td>图表/截图/表格里的信息检索（运维场景大量架构图、监控截图）</td><td>早期生产，多模态 embedding（联合编码文本+图像）快速成熟中</td><td>你已有 OCR 链路，下一步是图片直接进向量索引</td></tr>
+        <tr><td>pgvector 迁移</td><td>十万级以上语料的检索性能 + SQL 生态统一</td><td>HNSW 索引成熟，PostgreSQL 生态事实标准</td><td>repositories 层已隔离 SQL，迁移是受控改动（第 8 章 Q5 的演进路径）</td></tr>
+      </table>
+      <p>评测生态同样值得跟进：<b>RAGAS</b>（你自研 judge 对齐的就是它的指标体系）、TruLens、Opik——你的路线是「原理已自研验证 → 生产直接上框架」，和 Agent 框架同一个故事。</p>
+
+      <h2 class="sec-t"><span class="no">SECTION 9.4</span>对照表：你的项目 vs 2026 生产标准</h2>
+      <table class="cmp-table">
+        <tr><th>能力项</th><th>2026 生产标准</th><th>你的现状</th></tr>
+        <tr><td>混合检索 + RRF</td><td>默认配置</td><td class="y">✓ 已实现且有评测数据</td></tr>
+        <tr><td>rerank 精排</td><td>默认配置（跳过它是质量瓶颈首因）</td><td class="y">✓ 已实现（CPU 场景做成开关）</td></tr>
+        <tr><td>query 改写 / CRAG 自纠错</td><td>按失败类别引入</td><td class="y">✓ 已实现且有专属评测集</td></tr>
+        <tr><td>评测纪律（离线回归）</td><td>RAGAS 类框架 + 数据集版本化</td><td class="y">✓ 自研实现（方法论等价，工具可升级）</td></tr>
+        <tr><td>tracing / usage 观测</td><td>LangSmith / Langfuse 级</td><td class="y">✓ 最小自研（两张表 + usage 链路）</td></tr>
+        <tr><td>MCP 工具服务</td><td>新兴标配</td><td class="y">✓ 已实现（stdio，可升 HTTP）</td></tr>
+        <tr><td>chunk 级权限控制</td><td>企业刚需（多租户）</td><td>✗ 单用户场景未做——知道怎么做（chunk 表加 ACL 维度 + 检索时过滤）</td></tr>
+        <tr><td>GraphRAG 路由</td><td>综合类查询的解法</td><td>✗ 候选迭代方向（9.3 的方案）</td></tr>
+        <tr><td>安全（prompt 注入 / OWASP LLM Top 10）</td><td>生产门禁</td><td>△ 工具白名单已做；外部内容注入防护在 roadmap</td></tr>
+      </table>
+      <p>这张表本身就是面试材料：「哪里达标、哪里没做、没做的知道怎么做」——三档诚实度比全绿更可信。</p>
+
+      <h2 class="sec-t"><span class="no">SECTION 9.5</span>精选资源书签（2026-07 检索版）</h2>
+      <h3>路线图与体系课</h3>
+      <ul>
+        <li><a href="https://roadmap.sh/ai-engineer" target="_blank" rel="noopener">roadmap.sh/ai-engineer</a> —— 社区维护的 AI 应用工程师技能图谱，对照查漏</li>
+        <li><a href="https://www.deeplearning.ai/short-courses/" target="_blank" rel="noopener">DeepLearning.AI Short Courses</a> —— 吴恩达系列 1–2 小时短课：RAG、Agents、LangGraph、MCP 全都有，每门课半天拿下一个专题</li>
+        <li><a href="https://academy.langchain.com/" target="_blank" rel="noopener">LangChain Academy</a> —— LangGraph 官方免费课（Introduction to LangGraph），上框架前的第一站</li>
+        <li><a href="https://huggingface.co/learn/agents-course" target="_blank" rel="noopener">Hugging Face Agents Course</a> —— 免费带证书，覆盖 smolagents/LangGraph/LlamaIndex 三家写法</li>
+      </ul>
+      <h3>必读工程实践（一手来源）</h3>
+      <ul>
+        <li><a href="https://www.anthropic.com/research/building-effective-agents" target="_blank" rel="noopener">Anthropic: Building Effective Agents</a> —— Agent 设计模式的行业公认最佳短文；「workflow 与 agent 的区分」出处</li>
+        <li><a href="https://cookbook.openai.com/" target="_blank" rel="noopener">OpenAI Cookbook</a> —— function calling / RAG / eval 的官方代码范例库</li>
+        <li><a href="https://modelcontextprotocol.io/" target="_blank" rel="noopener">modelcontextprotocol.io</a> —— MCP 官方规范与 SDK 文档（你已实现，读规范补全术语）</li>
+        <li><a href="https://docs.ragas.io/" target="_blank" rel="noopener">RAGAS 文档</a> —— faithfulness/relevancy 等指标的正式定义，对齐你的自研 judge</li>
+        <li><a href="https://owasp.org/www-project-top-10-for-large-language-model-applications/" target="_blank" rel="noopener">OWASP LLM Top 10</a> —— prompt 注入、不安全输出处理等风险清单，安全问答的标准弹药</li>
+      </ul>
+      <h3>论文（读思想，不啃数学）</h3>
+      <ul>
+        <li><b>RAG 原始论文</b>（Lewis et al. 2020）与 <b>ReAct</b>（Yao et al. 2022）—— RAG 和 Agent 循环的思想源头，各读一遍摘要+图</li>
+        <li><b>Self-RAG / CRAG</b>（2023–2024）—— 你的检索自纠错的学术对应物，面试提术语的底气</li>
+        <li><b>RRF</b>（Cormack et al. 2009）—— 那个 60 的出处，两页纸</li>
+        <li><b>GraphRAG</b>（微软 2024）—— 下一步迭代方向的理论基础</li>
+      </ul>
+
+      <h2 class="sec-t"><span class="no">SECTION 9.6</span>3 / 6 / 12 个月精进计划</h2>
+      <table class="cmp-table">
+        <tr><th>时段</th><th>主线（每周 5–8 小时）</th><th>产出物（挂在简历上的）</th></tr>
+        <tr><td class="y">0–3 个月<br>求职冲刺期</td><td>① 本教材过两遍，所有动手实验跑通；② 第 10 章话术练到脱口而出；③ LangChain Academy 的 LangGraph 入门课 + 把项目里那个 LangGraph example 扩成三节点工作流；④ 每周 2 次模拟面试自答（对着第 10 章题库录音回听）</td><td>面试就绪状态；LangGraph 迁移 demo；GitHub 全绿的仓库</td></tr>
+        <tr><td>3–6 个月<br>上岗补强期</td><td>① pgvector 迁移落地（十万级语料压测）；② chunk 级 ACL（多租户改造）；③ 评测切换 RAGAS + Langfuse 上 tracing（自研换生产件）；④ OWASP LLM Top 10 逐项过一遍自己的系统</td><td>「单机 demo → 生产架构」的迁移故事；安全审计清单</td></tr>
+        <tr><td>6–12 个月<br>建立差异期</td><td>① GraphRAG 路由分流场景落地（服务依赖问答）；② 多模态检索（架构图/截图入索引）；③ 在公司内推动一个 AI 提效项目从 0 到上线（把个人项目经验变成团队交付）；④ 输出 2–3 篇深度技术文章（评测方法论/降级设计）</td><td>团队级 AI 项目 owner 经历；技术影响力素材</td></tr>
+      </table>
+      <div class="pitfall">
+        <div class="tag">精进期最大的坑</div>
+        <p><b>无限囤课</b>。你已经有一个跑通全链路的项目，这比 90% 的学习者领先——接下来的每一分学习都应该「回灌」到项目或工作里变成产出物。判断标准：学完一个东西，仓库里有没有多一个 commit、简历上能不能多一行字。不能的，先不学。</p>
+      </div>
+
+      <div class="iv-zone">
+        <div class="zone-head"><span class="ic">面</span><h2>面试官视角 · 本章问答</h2><span class="cnt"></span></div>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q1</span>你没用 LangChain，那你了解这个生态吗？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「了解且实际跑过。2026 年的格局：LangGraph 是生产标准（v1.0 后成为 LangChain 官方运行时，状态图 + checkpoint + human-in-the-loop），CrewAI 是角色制快速原型，AutoGen 分裂成社区 AG2 和微软 Agent Framework（Azure 系首选）。我仓库里有 LangGraph 双工具 agent 的可运行示例，概念映射我很清楚：我的事件生成器循环 = 它的图节点执行，我的 agent_steps 落库 = 它的 checkpointer，我的 SSE 事件 = 它的 stream 模式。自研让我知道框架在替我做什么，所以上手任何一家都是语法成本而不是概念成本。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q2</span>如果新项目让你选型，你选框架还是自研？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「默认选框架，LangGraph 优先——团队协作需要社区文档和人才池，checkpoint/observability 这些轮子没必要重造。两种例外我会自研：①输出契约极窄的单一场景（一个固定三步的流水线，上框架是杀鸡用牛刀）；②极端环境约束（离线内网、依赖审计严格——我的 MyOpenWeb 就是这类）。关键是我两条路都走得了，选型依据是约束而不是熟悉度。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q3</span>GraphRAG 是什么？什么时候需要它？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「解决单片检索答不了的跨文档综合题。普通 RAG 把语料当独立片段的平面集合，问『这 200 份合同的共同风险』时，答案不在任何一个片段里。GraphRAG 先从文档抽实体和关系建知识图谱，检索时沿关系遍历、对相关实体社区做摘要。2026 年的生产模式是<b>路由</b>：小分类器把点查题发给便宜快速的向量 RAG，综合题才走昂贵的图 RAG——不是替代是分流。我的运维场景里『服务 A 依赖谁、挂了影响谁』就是典型图问题，这是我项目的下一个迭代方向。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q4</span>AI 应用变化这么快，你怎么保持更新？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「一手来源优先 + 落到代码验证。固定跟：Anthropic/OpenAI 的工程博客（Building Effective Agents 这类）、MCP 规范更新、LangChain changelog、RAGAS 文档。判断信息价值的过滤器是『能不能回灌到我的项目』——比如我看到 CRAG 论文后把检索自纠错做进了系统并建了困难集评测，这比收藏一百篇文章有用。我给自己的节奏是每月一个可 commit 的新实践。」</p>
+          </div>
+        </details>
+      </div>
+
+      <div class="recap">
+        <div class="r-head">本章小结 · 装进口袋的 5 句话</div>
+        <div class="r-body"><ul>
+          <li>市场要「资深工程 × AI 能力」的交集，你的叙事是<b>旧武器打新仗</b>，不是转行从零。</li>
+          <li>框架地图：LangGraph 生产标准 / CrewAI 快速原型 / MS Agent Framework 挺进 Azure 系——懂原理的人换框架只是换语法。</li>
+          <li>2026 RAG 共识：混合+rerank 是默认栈（你已达标）；Agentic/CRAG 是按失败类别引入的升级（你已实现）；GraphRAG 用路由分流接综合题（你的下一步）。</li>
+          <li>对照表三档诚实度：达标的给数据、没做的给方案，比全绿更可信。</li>
+          <li>精进防坑：每一分学习必须变成 commit 或简历行，<b>拒绝囤课</b>。</li>
+        </ul></div>
+      </div>
+
+      <div class="ch-nav" data-auto></div>
+    </article>
+  </main>
+</div>
+<script src="assets/tutorial.js"></script>
+</body>
+</html>
