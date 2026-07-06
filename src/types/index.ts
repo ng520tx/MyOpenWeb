@@ -114,6 +114,7 @@ export interface AppSettings {
   rerankEnabled: boolean;
   rerankModel: string;
   queryRewriteEnabled: boolean;
+  agenticRetrievalEnabled: boolean;
   agentEnabled: boolean;
   agentToolProtocol: AgentToolProtocol;
   model: string;
@@ -138,6 +139,7 @@ export interface ProviderConfig {
   rerankEnabled: boolean;
   rerankModel: string;
   queryRewriteEnabled: boolean;
+  agenticRetrievalEnabled: boolean;
   agentToolProtocol: AgentToolProtocol;
 }
 

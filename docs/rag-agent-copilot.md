@@ -8,7 +8,7 @@
 把原本的「本地聊天骨架」补齐成可作为求职作品的「企业研发/运维 AI Copilot 工作台」，新增自研能力：
 
 1. 文件落盘 + 文本抽取：上传 txt/md/pdf/docx/图片，后端抽取纯文本并落盘（PDF/扫描件/图片可选走 PaddleOCR），独立 `files` 表。
-2. RAG 知识库：建库 → 挂文件 → 切片向量化 → 多轮检索改写（query rewrite）→ 混合检索（向量余弦 + BM25 经 RRF 融合，可选 bge-reranker 重排）→ 带引用回答 → 库外问题拒答。
+2. RAG 知识库：建库 → 挂文件 → 切片向量化 → 多轮检索改写（query rewrite）→ 混合检索（向量余弦 + BM25 经 RRF 融合，可选 bge-reranker 重排）→ 可选检索自纠错（Grader 评估 + 有界重检索）→ 带引用回答 → 库外问题拒答。
 3. 研发/运维 Agent 工具：日志分析、Git diff 摘要、工单总结、测试用例生成，并能让 Agent 自己决定调用 `search_knowledge` 查知识库；思考/工具调用/工具结果全过程经 SSE 实时推送，前端渲染步骤时间线。
 4. 检索质量评测：自建 40 条 QA 评测集 + 8 条多轮指代追问集，Hit@K / MRR / 延迟跨参数对照（见第 7 节）。
 5. 框架认知对照：`examples/langgraph-agent/` 用 LangGraph 复刻同等 Agent 能力，沉淀"手写循环 vs 框架"的对比结论（见第 10 节）。
@@ -69,6 +69,7 @@ flowchart TD
 - BM25 用 SQLite FTS5：零新增服务。中文分词用自研 CJK 二元组 + 英文小写单词（`services/tokenize.py`），解决 unicode61 分词器把整段中文当一个 token 的问题；索引和查询走同一分词器保证匹配一致。
 - 混合检索用 RRF：向量排名与 BM25 排名按 `1/(60+rank)` 融合，天然免调权重、对分数尺度不敏感；候选池取 `max(top_k*3, 10)` 给融合与重排留空间。
 - rerank 可降级：cross-encoder（bge-reranker）依赖单独放 `server/rerank/requirements.txt`，未安装或模型加载失败时负缓存 + 自动回退融合排序，核心链路不因 rerank 阻塞。
+- 检索自纠错有界且防误伤（`services/retrieval_grader.py`）：Grader 用宽松判定（有关键信息就算够）防误触发；followup 必须换表述、复读原查询直接放弃（重检索同一查询只会得到同样结果）；重检索硬上限 1 次防延迟螺旋；合并时首轮结果全保留（Grader 可能误判），二轮补进略放大的预算；Grader 任何失败都沿用首轮——与 rerank / query rewrite 同款降级哲学。
 - 两种工具协议可切换（设置 → Agent）：`prompt` 用系统提示词约定 JSON 输出，任何能写 JSON 的模型都能跑（含不支持 tools 的小模型），脏输出有归一化容错；`native` 走模型原生 function calling（tools 参数 + tool_calls 响应 + role=tool 回填），格式更稳、省去协议说明的 token，但依赖模型端支持（qwen2.5 实测可用）。
 - 不用 Dify：RAG 与 Agent 都自研，面试更好讲底层；Dify 仅作为后期可选编排 provider 的扩展点。
 - 普通聊天 vs Agent 两条 RAG 路径：
@@ -111,12 +112,17 @@ flowchart TD
    1) 向量化 query，numpy 余弦得到向量排名
    2) hybrid 模式再取 BM25（FTS5）排名，RRF 融合
    3) 开启 rerank 时对候选池做 cross-encoder 重排（失败自动回退）
+→ 开启检索自纠错（agentic retrieval）时：
+   retrieval_grader.grade_retrieval() 一次 temperature=0 小请求判断候选片段
+   能否回答问题；判不足时按 Grader 给出的"换表述补充查询"重检索一轮
+   （硬上限 1 次），两轮结果按 chunk_id 去重合并（首轮全保留 + 二轮补进
+   略放大的预算）；Grader 失败/脏输出/复读原查询 → 自动沿用首轮结果
 → 命中：拼"带 [序号] 来源标注的参考资料"system_prompt + 返回 sources
 → 未命中：注入拒答提示
 → 流式响应前先 emit 一条 {"sources":[...]} SSE，前端展示"引用来源"
 ```
 
-检索模式与 rerank 在「设置 → 知识库 / RAG」配置；`POST /api/knowledge/{id}/query` 支持 `mode` / `rerank` 覆盖参数做 A/B 调试。切换 hybrid 后需重建索引以生成 BM25 词表。
+检索模式、rerank 与检索自纠错在「设置 → 知识库 / RAG」配置；`POST /api/knowledge/{id}/query` 支持 `mode` / `rerank` 覆盖参数做 A/B 调试。切换 hybrid 后需重建索引以生成 BM25 词表。
 
 ### 3.4 Agent 调用知识库
 
@@ -286,12 +292,13 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 - rerank（bge-reranker-base）把 chunk_size=600 的 Hit@1 从 0.93 拉到 1.00，但 CPU 推理让单次检索到 5s 量级——质量优先场景可开，在线低延迟场景建议 GPU / ONNX / 缩小候选池。
 - chunk_size 400/600/800 中，600 在该语料上是质量与块数的平衡点。
 
-另有两套补充评测：
+另有三套补充评测：
 
 - **多轮改写评测**（`run_multiturn_eval.py`，8 条指代型追问）：原文直接检索 Hit@1 0.62 / MRR 0.792，LLM 改写后 0.88 / 0.938，报告见 `results-multiturn.md`。
 - **生成质量评测**（`run_judge_eval.py`，LLM-as-judge）：生成（qwen2.5:3b）与评审（qwen3.5:4b）分离，对应 RAGAS 的 faithfulness / answer relevancy 两维打 1–5 分，实测 4.00 / 4.17，拒答计为忠实，报告见 `results-judge.md`。与 RAGAS 的关系：指标同源，但零依赖自研（不引入 ragas + langchain 依赖树），面试可讲"指标怎么定义、judge prompt 怎么写、小模型互评的噪声怎么控"。
+- **检索自纠错对照评测**（`run_agentic_eval.py`，开/关对比）：标准 40 条集上基线已 Hit@4 0.97，Grader 仅触发 1/40 次、指标持平——说明自纠错在高基线上是"保险丝"而非提升项；换 12 条口语化措辞的困难集（`hard.jsonl`，top_k=2）后，Hit@4 0.83 → 0.92、MRR 0.708 → 0.736，救回 1 条基线未命中（报告见 `results-agentic.md` / `results-agentic-hard.md`）。结论：收益集中在"用户口语与文档书面语措辞错位"的查询，代价是每次多一个 Grader 请求（本地 CPU 小模型约 +20s，线上 API 级模型可忽略），所以默认关、按场景开。
 
-面试可讲的点：评测集怎么建、Hit@K 与 MRR 怎么算、RRF 为什么免调权、rerank 的收益与代价、为什么中文 BM25 需要自己分词、检索评测与生成评测（faithfulness/relevancy）为什么要分开。
+面试可讲的点：评测集怎么建、Hit@K 与 MRR 怎么算、RRF 为什么免调权、rerank 的收益与代价、为什么中文 BM25 需要自己分词、检索评测与生成评测（faithfulness/relevancy）为什么要分开、自纠错为什么要"宽松判定 + 禁止复读原查询 + 有界重检索"。
 
 ## 8. OCR 文档解析（PP-StructureV3）
 

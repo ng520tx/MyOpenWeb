@@ -31,6 +31,11 @@ class ProviderConfig(BaseModel):
     # recent chat history (resolves pronouns like "它的端口"). Falls back to the
     # raw query on any failure; single-turn chats skip the extra LLM call.
     query_rewrite_enabled: bool = True
+    # Agentic retrieval self-correction: after retrieving, a temperature=0
+    # grader call judges whether the chunks can answer the question; if not,
+    # one bounded follow-up retrieval targets the missing information. Grader
+    # failures fall back to first-pass results.
+    agentic_retrieval_enabled: bool = False
     # Agent tool-calling protocol: "prompt" instructs the model to emit a JSON
     # decision (works with any model), "native" uses the provider's function
     # calling API (requires model-side tools support, e.g. qwen2.5).

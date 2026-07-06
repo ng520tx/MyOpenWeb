@@ -383,6 +383,15 @@ export default function SettingsDrawer() {
           </span>
 
           <Toggle
+            label="检索自纠错（Agentic Retrieval）"
+            checked={settings.agenticRetrievalEnabled}
+            onChange={(v) => updateSettings({ agenticRetrievalEnabled: v })}
+          />
+          <span className="text-xs text-neutral-500 -mt-2 block leading-relaxed">
+            检索后先让模型评估资料是否足以回答（Grader），不足时按缺失信息补检索一轮再合并。会增加一次模型调用的延迟；评估失败自动沿用首轮结果。
+          </span>
+
+          <Toggle
             label="OCR 文档解析（扫描件 / 表格 / 图片）"
             checked={settings.ocrEnabled}
             onChange={(v) => updateSettings({ ocrEnabled: v })}

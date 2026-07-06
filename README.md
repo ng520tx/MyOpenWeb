@@ -178,6 +178,15 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 
 复现：`python -m server.eval.run_judge_eval`。低分样例集中在小模型引用编号错乱，生产建议换更强评审模型并人工复核低分回归。
 
+**检索自纠错（Agentic Retrieval）开/关对照**：检索后先让模型判断资料是否足以回答（Grader），不足时按缺失信息重检索一轮再合并（上限 1 次）。标准 40 条集上基线 Hit@4 已 0.97，Grader 仅触发 1/40、指标持平；在 12 条口语化措辞的困难集上（top_k=2，报告见 [server/eval/results-agentic-hard.md](server/eval/results-agentic-hard.md)）：
+
+| 指标 | 单轮检索 | 自纠错检索 |
+|---|---|---|
+| Hit@4 | 0.83 | 0.92 |
+| MRR | 0.708 | 0.736 |
+
+收益集中在"用户口语与文档书面语措辞错位"的查询（Grader 会生成换表述的补充查询）；代价是每次多一个 Grader 请求。默认关闭，设置页可开。复现：`python -m server.eval.run_agentic_eval`。
+
 ## 核心设计与取舍
 
 - **为什么自研 RAG / Agent 而不用 LangChain、Dify**：目标是把检索与工具调用的每一步（切片策略、相似度计算、拒答规则、工具循环上限、运行日志）做成可解释、可调试的白盒；规模上来后再按接口替换为框架或向量库，`repositories` 层已预留切换点。
@@ -220,6 +229,7 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 - [x] Agent 中间过程流式推送（思考 / 工具调用 / 工具结果实时时间线）
 - [x] 多轮对话检索改写（query rewrite，Hit@1 +26pp）
 - [x] MCP Server（知识库 + 工具暴露为标准 MCP 服务，Cursor 可直连）
+- [x] 检索自纠错（Grader 评估 + 有界重检索，开/关对照评测）
 - [ ] PostgreSQL + pgvector 可切换向量后端
 
 ## License

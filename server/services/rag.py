@@ -15,6 +15,7 @@ from server.schemas.config import ProviderConfig
 from server.services.embeddings import embed_query, embed_texts
 from server.services.query_rewrite import needs_rewrite, rewrite_query
 from server.services.rerank import rerank_chunks
+from server.services.retrieval_grader import grade_retrieval, merge_chunks
 from server.services.tokenize import build_match_query, tokenize_for_bm25
 
 
@@ -275,6 +276,20 @@ async def retrieve_for_chat(
         query = await rewrite_query(config, payload, query)
     top_k = int(payload.get("rag_top_k") or 4)
     chunks = await query_knowledge(config, config.embedding_model, knowledge_id, query, top_k)
+
+    if config.agentic_retrieval_enabled and chunks:
+        # Agentic self-correction: grade once, re-retrieve at most once.
+        sufficient, followup = await grade_retrieval(
+            config, str(payload.get("model", "")), query, chunks
+        )
+        if not sufficient:
+            # 二轮至少检 4 条：top_k 很小时，纠错目标片段常排在 2-4 位。
+            extra = await query_knowledge(
+                config, config.embedding_model, knowledge_id, followup, max(top_k, 4)
+            )
+            if extra:
+                chunks = merge_chunks(chunks, extra, top_k)
+
     if not chunks:
         return build_no_context_prompt(base_prompt), []
     return build_rag_system_prompt(base_prompt, chunks), serialize_sources(chunks)
