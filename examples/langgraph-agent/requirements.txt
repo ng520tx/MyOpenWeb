@@ -1,0 +1,5 @@
+# LangGraph 对照 demo 的独立依赖（不要装进主工程 venv）
+# python -m venv .venv && .venv/bin/pip install -r requirements.txt
+langgraph>=0.2
+langchain-core>=0.3
+langchain-ollama>=0.2

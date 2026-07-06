@@ -8,9 +8,10 @@
 把原本的「本地聊天骨架」补齐成可作为求职作品的「企业研发/运维 AI Copilot 工作台」，新增自研能力：
 
 1. 文件落盘 + 文本抽取：上传 txt/md/pdf/docx/图片，后端抽取纯文本并落盘（PDF/扫描件/图片可选走 PaddleOCR），独立 `files` 表。
-2. RAG 知识库：建库 → 挂文件 → 切片向量化 → 混合检索（向量余弦 + BM25 经 RRF 融合，可选 bge-reranker 重排）→ 带引用回答 → 库外问题拒答。
-3. 研发/运维 Agent 工具：日志分析、Git diff 摘要、工单总结、测试用例生成，并能让 Agent 自己决定调用 `search_knowledge` 查知识库。
-4. 检索质量评测：自建 40 条 QA 评测集，Hit@K / MRR / 延迟跨参数对照（见第 7 节）。
+2. RAG 知识库：建库 → 挂文件 → 切片向量化 → 多轮检索改写（query rewrite）→ 混合检索（向量余弦 + BM25 经 RRF 融合，可选 bge-reranker 重排）→ 带引用回答 → 库外问题拒答。
+3. 研发/运维 Agent 工具：日志分析、Git diff 摘要、工单总结、测试用例生成，并能让 Agent 自己决定调用 `search_knowledge` 查知识库；思考/工具调用/工具结果全过程经 SSE 实时推送，前端渲染步骤时间线。
+4. 检索质量评测：自建 40 条 QA 评测集 + 8 条多轮指代追问集，Hit@K / MRR / 延迟跨参数对照（见第 7 节）。
+5. 框架认知对照：`examples/langgraph-agent/` 用 LangGraph 复刻同等 Agent 能力，沉淀"手写循环 vs 框架"的对比结论（见第 10 节）。
 
 全程自研、零额外服务部署（向量直接存 SQLite，BM25 用 SQLite 内置 FTS5，内存余弦检索），便于面试讲清底层，也便于小规模私有部署。
 
@@ -101,6 +102,9 @@ flowchart TD
 ```text
 聊天带 knowledge_id → chat_proxy
 → rag.retrieve_for_chat()：取最后一条用户消息为 query
+→ 多轮对话时先 query_rewrite.rewrite_query()：
+   用最近 3 轮历史把"它的端口是多少"这类省略主语的追问改写成自包含查询
+   （一次 temperature=0 的小请求；失败/超长/空输出自动回退原文）
 → query_knowledge()：
    1) 向量化 query，numpy 余弦得到向量排名
    2) hybrid 模式再取 BM25（FTS5）排名，RRF 融合
@@ -117,9 +121,13 @@ flowchart TD
 ```text
 Agent 模式 + knowledge_id → agent_runner
 → 工具列表追加 search_knowledge
+→ run_agent_events() 逐步产出事件：
+   thinking（每轮决策前）/ tool_call（带参数）/ tool_result（带摘要与 ok 状态）
+→ 事件实时包成 SSE agent_event 帧推给前端（空 delta，老客户端自动忽略）
 → 模型决定调用 search_knowledge(query, top_k)
 → 后端异步 query_knowledge()，把片段回填给模型
-→ 命中片段去重后作为 sources 一并返回；agent_steps 记录该工具调用
+→ 命中片段去重后作为 sources 一并返回；agent_steps 记录完整输入输出
+→ 前端生成中渲染"思考中 / 调用工具 / 工具完成"时间线，完成后可查看完整运行日志
 ```
 
 ## 4. API 参考
@@ -309,9 +317,23 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 - `docker-compose.yml`：默认连宿主机 Ollama（`host.docker.internal`，Linux 用 `extra_hosts: host-gateway`）；`--profile ollama` 可把 Ollama 一起编排（此时 `PROVIDER_BASE_URL=http://ollama:11434/v1`）。
 - 用法见 README「Docker 一键部署」。OCR 与 rerank 属可选重依赖，不进主镜像。
 
-## 10. 后续扩展预案（仅方案，未实现）
+## 10. 与主流框架对比（LangGraph 对照 demo）
+
+`examples/langgraph-agent/` 用 LangGraph（StateGraph + ToolNode + 原生 function calling）复刻了主工程的「日志分析 + 知识检索」Agent，实测跑通（qwen2.5:3b）。这让"为什么不用 LangChain"从口头话术变成有代码支撑的结论：
+
+| 维度 | 主工程手写循环 | LangGraph 版 |
+|---|---|---|
+| 控制流 | for 循环 + 显式分支 | StateGraph 声明节点与条件边 |
+| 工具协议 | prompt 约定 JSON，自己解析容错 | bind_tools 走模型原生 function calling |
+| 状态管理 | 手动维护 messages 与步数 | MessagesState 自动合并 |
+| 可观测性 | 自建 agent_runs/agent_steps + SSE 事件 | graph.stream() 事件流 / LangSmith |
+| 依赖成本 | 零新增 | ~40MB（langgraph + langchain 系） |
+| 模型兼容 | 任意能输出 JSON 的模型 | 依赖模型端 tools 支持 |
+
+**结论**：小规模、可控性优先时手写更划算（协议容错、观测字段全白盒）；出现多分支规划、并行工具、human-in-the-loop、checkpoint 恢复需求时应切 LangGraph，不再手写。主工程工具是纯函数，迁移只需 `@tool` 包装。完整说明见 `examples/langgraph-agent/README.md`。
+
+## 11. 后续扩展预案（仅方案，未实现）
 
 - **PostgreSQL + pgvector 迁移**：把 `chunks.embedding` 改为 `vector` 列，检索改为 SQL `ORDER BY embedding <=> :q LIMIT k`；`repositories` 层接口不变，替换实现即可，便于写"企业级"简历。
 - **按文件增量索引**：当前为知识库整体重建，规模大后改为按文件维度增量更新 chunks 与 FTS。
-- **Agent 中间过程流式推送**：把工具调用事件实时 SSE 给前端（参考 Open WebUI 事件流），而非最终一次性输出。
 - **Dify 作为可选编排 provider**：把 Dify 作为一种 provider 接入，复杂工作流交给 Dify，简单场景仍走自研链路。
