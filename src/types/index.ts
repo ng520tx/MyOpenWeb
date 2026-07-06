@@ -11,6 +11,18 @@ export interface ChatMessage {
   files?: FileAttachment[];
   agent?: AgentSummary;
   sources?: RetrievalSource[];
+  /** Agent 生成过程中实时推送的步骤事件（仅生成中渲染时间线用） */
+  agentEvents?: AgentStepEvent[];
+}
+
+export interface AgentStepEvent {
+  type: 'thinking' | 'tool_call' | 'tool_result';
+  round?: number;
+  name?: string;
+  parameters?: Record<string, unknown>;
+  ok?: boolean;
+  summary?: string;
+  error?: string | null;
 }
 
 export interface AgentToolCallSummary {
@@ -189,6 +201,7 @@ export type TextStreamUpdate = {
   usage?: ResponseUsage;
   agent?: AgentSummary;
   sources?: RetrievalSource[];
+  agentEvent?: AgentStepEvent;
 };
 
 export type ResponseUsage = {

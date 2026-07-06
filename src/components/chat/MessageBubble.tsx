@@ -2,7 +2,7 @@ import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { fetchAgentRun } from '@/apis/agent';
-import type { AgentRun, ChatMessage } from '@/types';
+import type { AgentRun, AgentStepEvent, ChatMessage } from '@/types';
 import CodeBlock from './CodeBlock';
 
 interface MessageBubbleProps {
@@ -83,6 +83,9 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
           </div>
         ) : (
           <>
+            {!message.done && (message.agentEvents?.length ?? 0) > 0 && (
+              <AgentTimeline events={message.agentEvents!} />
+            )}
             <div className="markdown-body prose prose-invert prose-sm max-w-none">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
@@ -215,6 +218,65 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
       </div>
     </div>
   );
+}
+
+/** Agent 生成过程实时时间线：思考 / 工具调用 / 工具结果 */
+function AgentTimeline({ events }: { events: AgentStepEvent[] }) {
+  return (
+    <div className="mb-2 rounded-xl border border-blue-900/60 bg-blue-950/20 px-3 py-2 text-xs">
+      {events.map((event, index) => {
+        const isLast = index === events.length - 1;
+        return (
+          <div key={index} className="flex items-start gap-2 py-0.5">
+            {event.type === 'thinking' && (
+              <>
+                <span className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${isLast ? 'animate-pulse bg-blue-400' : 'bg-blue-700'}`} />
+                <span className="text-blue-200">
+                  {isLast ? `第 ${event.round ?? 1} 轮思考中…` : `第 ${event.round ?? 1} 轮决策完成`}
+                </span>
+              </>
+            )}
+            {event.type === 'tool_call' && (
+              <>
+                <span className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${isLast ? 'animate-pulse bg-amber-400' : 'bg-amber-600'}`} />
+                <span className="min-w-0 text-amber-200">
+                  调用工具 <span className="font-medium">{event.name}</span>
+                  {event.parameters && Object.keys(event.parameters).length > 0 && (
+                    <span className="ml-1 break-all text-amber-200/60">
+                      {truncateJson(event.parameters, 80)}
+                    </span>
+                  )}
+                </span>
+              </>
+            )}
+            {event.type === 'tool_result' && (
+              <>
+                <span className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${event.ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                <span className="min-w-0">
+                  <span className={event.ok ? 'text-emerald-200' : 'text-red-300'}>
+                    {event.name} {event.ok ? '完成' : `失败：${event.error ?? '未知错误'}`}
+                  </span>
+                  {event.ok && event.summary && (
+                    <span className="ml-1 break-all text-neutral-500">{event.summary}</span>
+                  )}
+                </span>
+              </>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function truncateJson(value: unknown, limit: number): string {
+  let text: string;
+  try {
+    text = JSON.stringify(value);
+  } catch {
+    text = String(value);
+  }
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
 }
 
 function formatJson(value: unknown): string {

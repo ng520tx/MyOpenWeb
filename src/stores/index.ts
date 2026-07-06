@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ChatMessage, Conversation, AppSettings, FileAttachment } from '@/types';
+import type { AgentStepEvent, ChatMessage, Conversation, AppSettings, FileAttachment } from '@/types';
 import { DEFAULT_SETTINGS, STORAGE_KEYS } from '@/constants';
 import { resolveApiUrl } from '@/utils/url';
 
@@ -87,6 +87,7 @@ interface AppState {
   addMessage: (role: ChatMessage['role'], content: string, files?: FileAttachment[]) => string;
   updateMessage: (id: string, partial: Partial<ChatMessage>) => void;
   appendContent: (id: string, text: string) => void;
+  appendAgentEvent: (id: string, event: AgentStepEvent) => void;
   clearMessages: () => void;
   persistNow: () => void;
 
@@ -254,6 +255,23 @@ export const useAppStore = create<AppState>((set, get) => {
                 ...c,
                 messages: c.messages.map((m) =>
                   m.id === id ? { ...m, content: m.content + text } : m
+                ),
+              }
+            : c
+        ),
+      }));
+    },
+
+    appendAgentEvent: (id, event) => {
+      const convId = get().activeConversationId;
+      if (!convId) return;
+      set((s) => ({
+        conversations: s.conversations.map((c) =>
+          c.id === convId
+            ? {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === id ? { ...m, agentEvents: [...(m.agentEvents ?? []), event] } : m
                 ),
               }
             : c

@@ -91,6 +91,9 @@ export default function ChatPage() {
                 feedStreamTTS(result.output);
               }
             }
+            if (update.agentEvent) {
+              useAppStore.getState().appendAgentEvent(aiId, update.agentEvent);
+            }
             if (update.agent) {
               useAppStore.getState().updateMessage(aiId, { agent: update.agent });
             }
@@ -101,7 +104,8 @@ export default function ChatPage() {
               if (thinkBuf && !thinkingRef.current) {
                 useAppStore.getState().appendContent(aiId, thinkBuf);
               }
-              useAppStore.getState().updateMessage(aiId, { done: true });
+              // 时间线只服务于生成过程，落库前清掉（完整步骤在 Agent 运行日志里）
+              useAppStore.getState().updateMessage(aiId, { done: true, agentEvents: undefined });
               break;
             }
           }

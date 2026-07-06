@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi.responses import StreamingResponse
@@ -56,14 +57,13 @@ TOOL_NAMES = {tool["name"] for tool in list_tools()} | {KNOWLEDGE_TOOL_NAME}
 
 
 async def create_agent_completion(config: ProviderConfig, payload: dict):
-    result = await run_agent(config, payload)
     if payload.get("stream", True):
         return StreamingResponse(
-            _single_sse_message(result["answer"], result["agent"], result["sources"]),
+            _stream_agent_sse(config, payload),
             media_type="text/event-stream",
-            headers={"X-Agent-Steps": str(len(result["steps"]))},
         )
 
+    result = await run_agent(config, payload)
     return {
         "id": "agentcmpl-myopenweb",
         "object": "chat.completion",
@@ -80,6 +80,20 @@ async def create_agent_completion(config: ProviderConfig, payload: dict):
 
 
 async def run_agent(config: ProviderConfig, payload: dict) -> dict[str, Any]:
+    """Non-streaming entry: drain the event generator and return the final result."""
+    result: dict[str, Any] | None = None
+    async for kind, data in run_agent_events(config, payload):
+        if kind == "result":
+            result = data
+    assert result is not None  # the generator always terminates with a result
+    return result
+
+
+async def run_agent_events(
+    config: ProviderConfig, payload: dict
+) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+    """Run the tool loop, yielding ("event", {...}) progress items along the way
+    and exactly one terminal ("result", {...}) item."""
     messages = list(payload.get("messages", []))
     steps: list[dict[str, Any]] = []
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
@@ -111,7 +125,8 @@ async def run_agent(config: ProviderConfig, payload: dict) -> dict[str, Any]:
     )
     collected_chunks: list[dict[str, Any]] = []
 
-    for _ in range(3):
+    for round_index in range(3):
+        yield ("event", {"type": "thinking", "round": round_index + 1})
         raw = await create_chat_completion_text(
             config,
             {
@@ -141,7 +156,8 @@ async def run_agent(config: ProviderConfig, payload: dict) -> dict[str, Any]:
                 output_data={"answer": final_answer},
             )
             finish_agent_run(run_id, final_answer)
-            return _agent_result(run_id, final_answer, steps, collected_chunks)
+            yield ("result", _agent_result(run_id, final_answer, steps, collected_chunks))
+            return
 
         tool_calls = decision.get("tool_calls") if isinstance(decision.get("tool_calls"), list) else []
 
@@ -154,12 +170,14 @@ async def run_agent(config: ProviderConfig, payload: dict) -> dict[str, Any]:
                 output_data={"answer": final_answer},
             )
             finish_agent_run(run_id, final_answer)
-            return _agent_result(run_id, final_answer, steps, collected_chunks)
+            yield ("result", _agent_result(run_id, final_answer, steps, collected_chunks))
+            return
 
         tool_results: list[dict[str, Any]] = []
         for tool_call in tool_calls:
             tool_name = str(tool_call.get("name", "")).strip()
             tool_input = tool_call.get("parameters") if isinstance(tool_call.get("parameters"), dict) else {}
+            yield ("event", {"type": "tool_call", "name": tool_name, "parameters": tool_input})
             add_agent_step(
                 run_id=run_id,
                 step_index=step_index,
@@ -200,6 +218,16 @@ async def run_agent(config: ProviderConfig, payload: dict) -> dict[str, Any]:
 
             steps.append(step)
             tool_results.append({"name": tool_name, "parameters": tool_input, "result": output})
+            yield (
+                "event",
+                {
+                    "type": "tool_result",
+                    "name": tool_name,
+                    "ok": bool(step["ok"]),
+                    "summary": _summarize_tool_output(output),
+                    "error": step.get("error"),
+                },
+            )
 
         messages.append({"role": "assistant", "content": raw})
         messages.append({
@@ -221,7 +249,7 @@ async def run_agent(config: ProviderConfig, payload: dict) -> dict[str, Any]:
         error="max_steps_exceeded",
     )
     finish_agent_run(run_id, final_answer)
-    return _agent_result(run_id, final_answer, steps, collected_chunks)
+    yield ("result", _agent_result(run_id, final_answer, steps, collected_chunks))
 
 
 def _agent_result(
@@ -391,25 +419,44 @@ def _normalize_tool_call(tool_call: dict[str, Any]) -> dict[str, Any]:
     return {"name": name, "parameters": parameters}
 
 
-async def _single_sse_message(answer: str, agent: dict[str, Any], sources: list[dict[str, Any]] | None = None):
-    payload = {
-        "choices": [
-            {
-                "delta": {"content": answer},
-                "finish_reason": None,
-            }
-        ]
-    }
-    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
-    done_payload = {
-        "choices": [
-            {
-                "delta": {},
-                "finish_reason": "stop",
-            }
-        ],
-        "agent": agent,
-        "sources": sources or [],
-    }
-    yield f"data: {json.dumps(done_payload, ensure_ascii=False)}\n\n".encode("utf-8")
+def _summarize_tool_output(output: Any, limit: int = 160) -> str:
+    """Compact one-line preview for the streamed timeline; full output stays in agent_steps."""
+    try:
+        text = output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)
+    except (TypeError, ValueError):
+        text = str(output)
+    text = " ".join(text.split())
+    return text[:limit] + ("…" if len(text) > limit else "")
+
+
+def _sse_frame(payload: dict[str, Any]) -> bytes:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
+
+
+async def _stream_agent_sse(config: ProviderConfig, payload: dict) -> AsyncIterator[bytes]:
+    """Stream agent progress as OpenAI-compatible SSE. Intermediate steps ride in
+    an ``agent_event`` field with an empty delta so older clients ignore them."""
+    result: dict[str, Any] | None = None
+    async for kind, data in run_agent_events(config, payload):
+        if kind == "event":
+            yield _sse_frame(
+                {
+                    "agent_event": data,
+                    "choices": [{"delta": {}, "finish_reason": None}],
+                }
+            )
+        else:
+            result = data
+
+    assert result is not None
+    yield _sse_frame(
+        {"choices": [{"delta": {"content": result["answer"]}, "finish_reason": None}]}
+    )
+    yield _sse_frame(
+        {
+            "choices": [{"delta": {}, "finish_reason": "stop"}],
+            "agent": result["agent"],
+            "sources": result["sources"],
+        }
+    )
     yield b"data: [DONE]\n\n"

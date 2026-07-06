@@ -180,8 +180,8 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 - [x] 检索质量评测（Hit@K / MRR 参数对照，见 `server/eval/`）
 - [x] Docker 一键部署（FastAPI 托管 H5 单容器）
 - [x] 后端单元测试 + GitHub Actions CI
+- [x] Agent 中间过程流式推送（思考 / 工具调用 / 工具结果实时时间线）
 - [ ] PostgreSQL + pgvector 可切换向量后端
-- [ ] Agent 中间过程流式推送
 
 ## License
 

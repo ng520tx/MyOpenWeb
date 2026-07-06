@@ -1,6 +1,6 @@
 import { EventSourceParserStream } from 'eventsource-parser/stream';
 import type { ParsedEvent } from 'eventsource-parser';
-import type { AgentSummary, RetrievalSource, TextStreamUpdate } from '@/types';
+import type { AgentStepEvent, AgentSummary, RetrievalSource, TextStreamUpdate } from '@/types';
 
 export async function createOpenAITextStream(
   responseBody: ReadableStream<Uint8Array>,
@@ -118,13 +118,14 @@ async function* openAIStreamToIterator(
       const finishReason = parsed.choices?.[0]?.finish_reason;
       const agent = isAgentSummary(parsed.agent) ? parsed.agent : undefined;
       const sources = Array.isArray(parsed.sources) ? (parsed.sources as RetrievalSource[]) : undefined;
+      const agentEvent = isAgentStepEvent(parsed.agent_event) ? parsed.agent_event : undefined;
 
       if (finishReason === 'stop') {
-        yield { done: true, value: delta, agent, sources };
+        yield { done: true, value: delta, agent, sources, agentEvent };
         break;
       }
 
-      yield { done: false, value: delta, agent, sources };
+      yield { done: false, value: delta, agent, sources, agentEvent };
     } catch {
       continue;
     }
@@ -135,6 +136,12 @@ function isAgentSummary(value: unknown): value is AgentSummary {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<AgentSummary>;
   return typeof candidate.runId === 'string' && Array.isArray(candidate.toolCalls);
+}
+
+function isAgentStepEvent(value: unknown): value is AgentStepEvent {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<AgentStepEvent>;
+  return candidate.type === 'thinking' || candidate.type === 'tool_call' || candidate.type === 'tool_result';
 }
 
 async function* streamLargeDeltasAsRandomChunks(
