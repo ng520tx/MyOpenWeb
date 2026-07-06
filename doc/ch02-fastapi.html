@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>02 · FastAPI 后端解剖 · MyOpenWeb 修炼手册</title>
+<link rel="stylesheet" href="assets/tutorial.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <main class="content">
+    <article class="article">
+
+      <div class="ch-head">
+        <div class="ch-eyebrow"><span class="badge">CH 02</span><span class="part">第一部分 · 基础</span></div>
+        <h1>FastAPI 后端解剖<br>—— routers / services / repositories</h1>
+        <p class="lede">你写过 Express 中间件、调过 Spring 的 Controller，MVC 分层的直觉早就在你脑子里。这一章把 MyOpenWeb 后端的骨架完整拆开：请求从进门到落库的每一站、Pydantic 为什么等于「运行时会真校验的 zod」、以及你最熟悉的 SSE 换到服务端是怎么写的。</p>
+        <div class="ch-meta"><span>预计 3–4 小时</span><span>难度 ★★☆☆☆</span><span>对应源码 server/main.py、routers/、schemas/、services/providers.py</span></div>
+      </div>
+
+      <div class="goals">
+        <h2>学完本章你能</h2>
+        <ul>
+          <li>画出本项目后端的<b>四层结构图</b>并说清每层职责与依赖方向</li>
+          <li>解释 Pydantic 的两个角色：<b>入参校验</b>（≈ zod.parse）与<b>出参序列化</b>（response_model）</li>
+          <li>从服务端视角讲清 <b>SSE 流式响应</b>的完整生命周期（你以前只见过浏览器那一半）</li>
+          <li>用 <code>/docs</code> 自动文档和 curl 独立调试任意接口</li>
+        </ul>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 2.1</span>全景：一个请求的旅程</h2>
+      <p>先建立地图。以「保存一条记忆」为例，<code>POST /api/memories</code> 从进门到返回经过四站：</p>
+      <table class="cmp-table">
+        <tr><th>层</th><th>本项目目录</th><th>职责</th><th>你熟悉的对应物</th></tr>
+        <tr><td class="y">① 入口/中间件</td><td><code>server/main.py</code></td><td>创建应用、挂 CORS、注册所有路由、托管前端静态文件</td><td>Express 的 <code>app.ts</code> + <code>app.use()</code></td></tr>
+        <tr><td class="y">② 路由层</td><td><code>server/routers/</code></td><td>定义 URL/方法/入参模型，薄壳，不写业务</td><td>NestJS Controller / Express Router</td></tr>
+        <tr><td class="y">③ 服务层</td><td><code>server/services/</code></td><td>业务逻辑：RAG 检索、Agent 循环、LLM 协议归一</td><td>Service 层（Spring 的 @Service）</td></tr>
+        <tr><td class="y">④ 仓储层</td><td><code>server/repositories/</code></td><td>纯数据存取，SQL 只出现在这里</td><td>DAO / Repository（MyBatis Mapper）</td></tr>
+      </table>
+      <p>配套的还有两个「横切」目录：<code>schemas/</code> 放 Pydantic 模型（≈ 前后端共享的 types + zod schema），<code>db.py</code> 管连接与建表。<b>依赖方向永远向下</b>：router → service → repository → db，反向 import 不存在——这保证换掉任何一层不动其他层（面试可以主动讲这句）。</p>
+
+      <div class="analogy">
+        <div class="tag">前端类比</div>
+        <p>这套结构就是你在 React 项目里做的分层的服务端镜像：<code>pages/</code>（薄，只组装）→ <code>apis/</code>（封装请求）→ <code>stores/</code>（状态与逻辑）。本项目前端恰好也是这么分的——<code>src/pages/ChatPage.tsx</code> 调 <code>src/apis/chat.ts</code>，和后端 router 调 service 是同一个思想：<b>薄壳 + 单一职责</b>。</p>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 2.2</span>入口 main.py：52 行读懂应用装配</h2>
+      <pre data-lang="python" data-path="server/main.py（真实代码，节选）">
+def create_app() -> FastAPI:
+    init_db()                                  # 启动时建表（幂等，IF NOT EXISTS）
+
+    app = FastAPI(title="MyOpenWeb Server", version="0.1.0")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],                   # 内网工具，全放开；公网部署要收紧
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    app.include_router(health.router)          # 每个业务模块一个 router 文件
+    app.include_router(config.router)
+    app.include_router(chat_proxy.router)
+    app.include_router(agent.router)
+    # ...共 10 个模块
+
+    # 有 dist 就托管前端（单容器部署）：API 路由优先，其余落到 SPA
+    if WEB_DIST_DIR.exists():
+        app.mount("/", StaticFiles(directory=WEB_DIST_DIR, html=True), name="web")
+    return app
+
+app = create_app()                             # uvicorn server.main:app 指向这里</pre>
+      <div class="code-notes"><ul>
+        <li><code>FastAPI()</code> ≈ <code>express()</code>；<code>add_middleware(CORSMiddleware)</code> ≈ <code>app.use(cors())</code>，一字不差的对应。</li>
+        <li><code>include_router</code> ≈ <code>app.use("/api/memories", memoriesRouter)</code>——把各模块的路由挂进主应用。</li>
+        <li>最后的 <code>StaticFiles</code> 挂载解决了「一个容器同时跑 API 和前端」：先匹配 API 路由，匹配不到才回落到 <code>dist/index.html</code>。这是 Docker 单镜像部署的关键一招（第 8 章展开）。</li>
+        <li><code>uvicorn server.main:app</code> 的含义：进程管理器（≈ node）加载 <code>server/main.py</code> 模块里名为 <code>app</code> 的对象来伺服。</li>
+      </ul></div>
+
+      <h2 class="sec-t"><span class="no">SECTION 2.3</span>路由层：五个装饰器写完一套 CRUD</h2>
+      <p>看最典型的 <code>routers/memories.py</code>，35 行就是完整的 REST 资源：</p>
+      <pre data-lang="python" data-path="server/routers/memories.py（真实代码）">
+router = APIRouter(prefix="/api/memories", tags=["memories"])
+
+@router.get("", response_model=MemoriesResponse)
+def get_memories() -> MemoriesResponse:
+    return MemoriesResponse(memories=list_memories())
+
+@router.post("", response_model=Memory)
+def post_memory(payload: MemoryCreate) -> Memory:
+    return create_memory(payload)
+
+@router.put("/{memory_id}", response_model=Memory)
+def put_memory(memory_id: str, payload: MemoryUpdate) -> Memory:
+    memory = update_memory(memory_id, payload)
+    if not memory:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return memory
+
+@router.delete("/{memory_id}")
+def delete_memory_by_id(memory_id: str) -> dict[str, bool]:
+    ok = delete_memory(memory_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return {"ok": True}</pre>
+      <div class="code-notes"><ul>
+        <li><code>APIRouter(prefix=...)</code> ≈ NestJS 的 <code>@Controller("api/memories")</code>；<code>tags</code> 只影响自动文档分组。</li>
+        <li><b>参数从哪来是「推断」的</b>：<code>memory_id: str</code> 出现在路径模板里 → 取自 URL；<code>payload: MemoryCreate</code> 是 Pydantic 模型 → 取自请求体 JSON。不用手写 <code>req.params</code> / <code>req.body</code>。</li>
+        <li><code>raise HTTPException(404)</code> ≈ NestJS <code>throw new NotFoundException()</code>，框架统一转成 JSON 错误响应。</li>
+        <li>注意每个函数体都只有 1–3 行：<b>路由层不写业务</b>，全部转发给仓储/服务层。这是面试聊工程素养的好素材。</li>
+      </ul></div>
+
+      <h2 class="sec-t"><span class="no">SECTION 2.4</span>Pydantic：TS interface + zod 合体，且运行时真校验</h2>
+      <p>TS 的 interface 编译后就消失了，所以你前端要再用 zod 在运行时校验一遍。Pydantic 把这两件事合成一个东西：<b>类定义即 schema，构造即校验</b>。</p>
+      <pre data-lang="python" data-path="server/schemas/memory.py（真实代码）">
+MemoryCategory = Literal["preference", "profile", "project", "fact"]
+
+class Memory(BaseModel):
+    id: str
+    content: str
+    category: MemoryCategory = "fact"
+    enabled: bool = True
+    created_at: int
+    updated_at: int
+
+class MemoryCreate(BaseModel):
+    content: str = Field(min_length=1)      # 空字符串直接 422
+    category: MemoryCategory = "fact"
+    enabled: bool = True
+
+class MemoryUpdate(BaseModel):
+    content: str | None = Field(default=None, min_length=1)
+    category: MemoryCategory | None = None   # 全可选 = PATCH 语义
+    enabled: bool | None = None</pre>
+      <div class="code-notes"><ul>
+        <li>逐行翻译成你熟悉的 TS + zod：<code>Literal[...]</code> = 字符串字面量联合类型；<code>Field(min_length=1)</code> = <code>z.string().min(1)</code>；<code>str | None = None</code> = <code>z.string().optional()</code>。</li>
+        <li>Create / Update 拆成两个模型 ≈ 你在 TS 里写 <code>type MemoryUpdate = Partial&lt;MemoryCreate&gt;</code> 的意图，只是显式声明。</li>
+        <li>请求体不合法时 FastAPI 自动回 <b>422 + 逐字段错误详情</b>，路由函数根本不会执行——校验被推到系统边界，业务代码里再也不用写 if 判空。</li>
+      </ul></div>
+
+      <p>Pydantic 的第二个角色在装饰器参数里：<code>response_model=Memory</code> 告诉框架「返回值按这个模型序列化」——多余字段剔除、类型不符报错，同时自动生成 OpenAPI 文档。这就是 <code>/docs</code> 页面（Swagger UI）不用写一行注释就存在的原因。</p>
+
+      <div class="try-it">
+        <div class="tag">动手实验 1 · 亲手触发 422</div>
+        <p>启动服务后，先开浏览器访问 <code>http://localhost:8000/docs</code> 逛一圈自动文档，然后用 curl 发一个非法请求：</p>
+        <pre data-lang="bash" data-path="WSL 终端">
+# content 为空字符串，违反 min_length=1
+curl -s -X POST http://localhost:8000/api/memories \
+  -H "Content-Type: application/json" \
+  -d '{"content": ""}' | python -m json.tool
+# 返回 422，detail 里精确指出 content 字段 string_too_short</pre>
+        <p class="muted">再把 content 改成正常文本发一次，观察 200 响应体正好是 Memory 模型的形状。</p>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 2.5</span>SSE 流式：你见过浏览器那半，现在看服务端这半</h2>
+      <p>你在前端处理过打字机效果：<code>fetch</code> 拿 <code>response.body.getReader()</code> 循环读 chunk。现在换到发送方。SSE 本质是<b>一个一直不关闭的 HTTP 响应</b>，服务端按 <code>data: {...}\n\n</code> 的格式一段段往外写。</p>
+
+      <p>FastAPI 里的写法：把一个 <b>async 生成器</b>（还记得第 1 章的 <code>yield</code> 吗）交给 <code>StreamingResponse</code>，每 yield 一次，一个 chunk 就飞向浏览器：</p>
+      <pre data-lang="python" data-path="server/services/providers.py（真实代码，节选）">
+async def create_chat_completion(config: ProviderConfig, payload: dict):
+    if payload.get("stream", True):
+        async def iterator() -> AsyncIterator[bytes]:
+            for candidate in _candidate_configs(config):
+                # 与上游模型服务建立流式连接（Ollama 或 OpenAI 兼容）
+                stream = _stream_ollama_response(response) if use_ollama_native \
+                         else _stream_openai_response(response)
+                async for chunk in stream:
+                    yield chunk            # ← 每拿到一段就立刻转发给浏览器
+                return
+
+        return StreamingResponse(iterator(), media_type="text/event-stream")</pre>
+      <div class="code-notes"><ul>
+        <li><code>media_type="text/event-stream"</code> 就是 SSE 的 Content-Type，浏览器/前端据此按事件流解析。</li>
+        <li>这里的模式是「<b>管道转接</b>」：服务端同时是客户端（对 Ollama）和服务端（对浏览器），chunk 进来一段就 yield 一段，全程内存里只有一小段数据——不是等全部生成完再发。</li>
+        <li>对照你前端 <code>src/apis/streaming.ts</code> 里的 reader 循环，两端连起来就是完整链路：Ollama → httpx 流 → yield → StreamingResponse → fetch reader → setState 打字机。</li>
+      </ul></div>
+
+      <p>再看一个「往流里插私货」的实战技巧。RAG 命中的引用来源需要先于正文到达前端，<code>chat_proxy.py</code> 的做法是包一层生成器，先 yield 一帧自定义数据再转发原流：</p>
+      <pre data-lang="python" data-path="server/routers/chat_proxy.py（真实代码）">
+def _prepend_sources(response: StreamingResponse, sources: list[dict[str, Any]]) -> StreamingResponse:
+    original = response.body_iterator
+
+    async def iterator() -> AsyncIterator[bytes]:
+        head = {"sources": sources, "choices": [{"delta": {}, "finish_reason": None}]}
+        yield f"data: {json.dumps(head, ensure_ascii=False)}\n\n".encode("utf-8")
+        async for chunk in original:
+            yield chunk
+
+    response.body_iterator = iterator()
+    return response</pre>
+      <div class="code-notes"><ul>
+        <li>这一帧伪装成标准 OpenAI chunk 的形状（<code>choices[].delta</code> 为空），只多带一个 <code>sources</code> 字段——老前端代码不认识就忽略，认识的就渲染引用卡片。<b>协议兼容的扩展方式</b>，面试可讲。</li>
+        <li>SSE 帧格式必须是 <code>data: </code> 前缀 + 两个换行结尾，少一个 <code>\n</code> 前端就收不到完整事件——你在前端调试过这种问题的话会非常有共鸣。</li>
+      </ul></div>
+
+      <div class="analogy">
+        <div class="tag">前端类比</div>
+        <p>SSE vs WebSocket 的选型直觉：SSE 是<b>单向广播</b>（服务器→浏览器），跑在普通 HTTP 上，自动重连、过代理不折腾；WebSocket 是双向全双工，要升级协议。聊天流式输出只需要「服务器往下推」，所以全行业（OpenAI/Anthropic/Ollama）都用 SSE。你要发消息时另起一个普通 POST 就行。</p>
+      </div>
+
+      <div class="try-it">
+        <div class="tag">动手实验 2 · 裸眼看 SSE 帧</div>
+        <p>不经过前端，直接用 curl 看流式响应的原始报文（需要 Ollama 在跑）：</p>
+        <pre data-lang="bash" data-path="WSL 终端">
+curl -N -X POST http://localhost:8000/api/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "qwen3:4b", "stream": true,
+       "messages": [{"role": "user", "content": "用一句话介绍SSE"}]}'
+# -N 关闭缓冲。你会看到一行行 data: {"choices":[{"delta":{"content":"..."}}]}
+# 最后一帧是 data: [DONE]</pre>
+        <p class="muted">看到 <code>data:</code> 帧逐行蹦出来的那一刻，SSE 对你就不再是黑盒了。</p>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 2.6</span>把四层串起来：自己走一遍代码</h2>
+      <p>现在合上教材，按这条线索走读一次源码（每个文件都很短）：</p>
+      <ol>
+        <li><code>server/main.py</code> —— 找到 <code>include_router(memories.router)</code></li>
+        <li><code>server/routers/memories.py</code> —— 看 POST 如何声明 <code>payload: MemoryCreate</code></li>
+        <li><code>server/schemas/memory.py</code> —— 看 <code>Field(min_length=1)</code> 的校验声明</li>
+        <li><code>server/repositories/memories.py</code> —— 看 <code>create_memory</code> 的参数化 INSERT</li>
+        <li><code>server/db.py</code> —— 看 <code>get_db()</code> 的 yield 前后各做了什么</li>
+      </ol>
+      <p>能不看教材说出「每一站发生了什么」，本章就通关了。</p>
+
+      <div class="iv-zone">
+        <div class="zone-head"><span class="ic">面</span><h2>面试官视角 · 本章问答</h2><span class="cnt"></span></div>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q1</span>为什么选 FastAPI 而不是 Flask / Django？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「三个理由：<b>原生 async</b>——我的核心场景是流式转发 LLM 响应，IO 密集，asyncio 模型正合适，Flask 是同步模型要靠 gevent 打补丁；<b>Pydantic 一体化</b>——类型校验、序列化、OpenAPI 文档一份代码三个产出；<b>轻</b>——Django 自带 ORM/Admin/模板引擎，对一个 API-only 的服务是负担。FastAPI 是当前 AI 应用后端的事实标准，OpenAI/Anthropic 的示例代码也都是它。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q2</span>Pydantic 在你项目里具体解决了什么问题？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「两个边界各挡一次：<b>入参</b>——所有请求体在进入业务代码前完成校验，非法请求 422 带字段级错误，业务层零判空；<b>出参</b>——response_model 保证响应形状稳定，内部字段改名或多出敏感字段不会泄漏。另外它是 OpenAPI 文档的数据源，前端同学（就是我自己）看 /docs 就能对接口。」</p>
+            <p class="followup">追问预判：「和 TS 的类型有什么本质区别？」→ 答：TS 类型编译期擦除，运行时不设防；Pydantic 是运行时真校验，跨系统边界（HTTP）必须靠它。前端我再用 TS interface 描述一遍，两端各自守边界。</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q3</span>SSE 和 WebSocket 怎么选？你为什么用 SSE？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「聊天流式输出是纯单向：服务器推 token，客户端只收。SSE 跑在普通 HTTP 上，代理/网关友好、断线自动重连、实现就是一个不关闭的响应，成本低。WebSocket 双向全双工，适合协同编辑、多人游戏这类双向高频场景，但要处理协议升级、心跳、网关配置。用户发消息走普通 POST 即可，没必要为单向需求付双向的复杂度。行业同行（OpenAI API）也是 SSE。」</p>
+            <p class="followup">追问预判：「SSE 在移动端 WebView 里有坑吗？」→ 答：我的 Android 壳用 fetch + ReadableStream 读流而不是 EventSource，绕开了 EventSource 不支持 POST/自定义 header 的限制——这正是我前端背景带来的实现细节优势。</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q4</span>你的后端分层依据是什么？service 和 repository 边界在哪？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「repository 只做数据存取：SQL 全部集中在这层，函数签名是领域模型进出，不含业务规则。service 做编排与算法：RAG 检索融合、Agent 循环、协议归一，它调用 repository 但不知道 SQL 存在。router 是薄壳：声明 URL 和模型，函数体一般 1–3 行。检验标准：把 SQLite 换成 PostgreSQL 只改 repository；把 REST 换成 gRPC 只改 router。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q5</span>FastAPI 的依赖注入（Depends）你了解吗？项目里为什么没大量用？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「Depends 是 FastAPI 的 DI 机制：路由参数声明 <code>db: Session = Depends(get_db)</code>，框架负责构造和释放，可级联、可覆盖（测试时替换成 mock 极方便）。我的项目规模下选择了更直白的方式——repository 内部用 <code>with get_db()</code> 上下文管理器，调用方零感知。权衡：牺牲了『测试时按依赖粒度替换』的灵活性（我用 monkeypatch 补偿），换来更少的样板代码。如果服务要加鉴权、多租户上下文，我会把这些横切关注迁到 Depends。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q6</span>你的 API 都没有鉴权，生产上线怎么办？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「当前定位是企业内网单用户工作台，信任边界在网络层（内网/VPN）。上公网的演进路径我想清楚了：FastAPI 加一个 API-Key 或 JWT 的全局 Depends 中间件（一个函数十几行）；多用户则在数据层给表加 user_id 维度 + 行级过滤。之所以现在不做，是不给单用户场景增加无收益的复杂度——但架构上 router 薄壳的设计让加鉴权是纯增量改动。」</p>
+          </div>
+        </details>
+      </div>
+
+      <div class="recap">
+        <div class="r-head">本章小结 · 装进口袋的 6 句话</div>
+        <div class="r-body"><ul>
+          <li>四层结构：<b>main（装配）→ routers（薄壳）→ services（业务）→ repositories（SQL）</b>，依赖只向下。</li>
+          <li><code>APIRouter</code> ≈ Express Router；<code>add_middleware</code> ≈ <code>app.use()</code>；参数按「路径里有名字→URL、是模型→请求体」推断。</li>
+          <li>Pydantic = interface + zod 合体：构造即校验，非法入参 422，业务代码零判空。</li>
+          <li><code>response_model</code> 管出参序列化 + 白名单裁剪 + 自动生成 <code>/docs</code>。</li>
+          <li>SSE = 不关闭的 HTTP 响应；服务端 = async 生成器 yield 帧 + <code>StreamingResponse</code>。</li>
+          <li>流式转发是「管道」不是「缓冲」：chunk 进来一段 yield 一段，内存恒定。</li>
+        </ul></div>
+      </div>
+
+      <div class="ch-nav" data-auto></div>
+    </article>
+  </main>
+</div>
+<script src="assets/tutorial.js"></script>
+</body>
+</html>

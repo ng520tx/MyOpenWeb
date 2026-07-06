@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>03 · LLM 基础与协议归一 · MyOpenWeb 修炼手册</title>
+<link rel="stylesheet" href="assets/tutorial.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <main class="content">
+    <article class="article">
+
+      <div class="ch-head">
+        <div class="ch-eyebrow"><span class="badge">CH 03</span><span class="part">第一部分 · 基础</span></div>
+        <h1>LLM 基础与协议归一<br>—— token、prompt、Ollama 与 providers.py</h1>
+        <p class="lede">这一章把「大模型」从营销词还原成工程对象：它是一个<b>输入一串 token、输出下一个 token 概率分布</b>的函数。理解了这一点，temperature、上下文窗口、按 token 计费、为什么历史要全量重发——所有概念一次贯通。最后读 <code>providers.py</code>，看一个 payload 如何适配两种上游方言。</p>
+        <div class="ch-meta"><span>预计 4 小时</span><span>难度 ★★☆☆☆</span><span>对应源码 server/services/providers.py（485 行）</span></div>
+      </div>
+
+      <div class="goals">
+        <h2>学完本章你能</h2>
+        <ul>
+          <li>用工程语言解释 <b>token / 上下文窗口 / temperature / top_p</b>，不背玄学</li>
+          <li>默写 <b>Chat Completion 协议</b>的请求与响应结构（这是全行业通用语）</li>
+          <li>在本机用 <b>Ollama</b> 拉起模型，并用 curl 分别调它的两套 API</li>
+          <li>讲清 <code>providers.py</code> 的适配器设计：为什么一个后端能同时接 Ollama 和任意 OpenAI 兼容服务</li>
+        </ul>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 3.1</span>去魅：LLM 是一个「下一个词」的概率函数</h2>
+      <p>剥掉所有包装，一次 LLM 调用做的事情是：</p>
+      <div class="keypoint">
+        <div class="tag">核心模型</div>
+        <p><code>f(前文 token 序列) → 词表上每个 token 的概率分布</code>。生成回答 = 反复调这个函数：采样出一个 token，拼回输入末尾，再算下一个，直到采样出「结束符」。所谓「流式输出」，就是这个循环每转一圈把新 token 发给你一次——这就是你前端做打字机效果时收到的那些 chunk 的来源。</p>
+      </div>
+
+      <div class="analogy">
+        <div class="tag">前端类比</div>
+        <p>输入法的联想条是一个微型语言模型：你打「今天天气」它建议「真好/怎么样/不错」。LLM 是它的千亿参数版本，联想的不是三个词，而是整个词表的概率分布，且能「联想」出代码、JSON、推理链。它没有数据库查询、没有意识——只有条件概率。</p>
+      </div>
+
+      <h3>token：模型世界的字节</h3>
+      <p>模型不认识「字」，只认识 token——用 BPE 等算法把文本切成的子词单元。工程上你需要记住的换算：</p>
+      <ul>
+        <li>英文约 <b>0.75 词/token</b>（"understanding" 可能切成 "under"+"standing"）</li>
+        <li>中文约 <b>1 字 ≈ 1–2 token</b>（取决于分词器，常见汉字通常 1 token，生僻字会拆成多个）</li>
+        <li>费用、限速、上下文长度<b>全部以 token 计</b>。你在第 7 章会看到本项目把每轮的 prompt_tokens / completion_tokens 记进数据库——那就是账单的原始凭证。</li>
+      </ul>
+
+      <h3>上下文窗口：模型的「工作内存」</h3>
+      <p>模型一次前向计算能看到的 token 上限（如 8K/32K/128K）。超了怎么办？<b>模型不会报警，行为是「最早的内容被截断或报错」</b>。这直接决定了两个工程设计：</p>
+      <ul>
+        <li>聊天历史不能无限带——所以有「历史截断」「摘要压缩」这类策略；</li>
+        <li>RAG 检索回来的资料不能全塞——所以第 4 章会讲 top_k、切片大小的权衡，本质都是在<b>预算内分配窗口</b>。</li>
+      </ul>
+
+      <h3>temperature 与采样</h3>
+      <p>拿到概率分布后怎么选下一个 token，就是采样策略：</p>
+      <table class="cmp-table">
+        <tr><th>参数</th><th>作用</th><th>工程口径</th></tr>
+        <tr><td><code>temperature</code></td><td>缩放概率分布的「尖锐度」：0 = 永远取最大概率（确定性），越高分布越平（随机性/创造性越强）</td><td>写作/头脑风暴 0.7–1.0；<b>抽取、判断、JSON 输出用 0–0.2</b>。本项目 Grader 打分固定 temperature=0</td></tr>
+        <tr><td><code>top_p</code></td><td>只在累计概率前 p 的候选里采样（核采样），砍掉长尾乱词</td><td>与 temperature 二选一调，别同时猛调</td></tr>
+        <tr><td><code>max_tokens</code></td><td>回答长度上限（不是承诺，是截断线）</td><td>本项目默认 4096，见 <code>schemas/chat.py</code></td></tr>
+      </table>
+
+      <div class="pitfall">
+        <div class="tag">面试高频误区</div>
+        <p>「temperature=0 就完全可复现」——<b>不严格成立</b>。浮点并行计算的非确定性、后端 batch 调度都可能引入微小差异；工程上说「近似确定」更专业。另外 temperature 不改变模型「知道什么」，只改变「怎么选词」，它救不了幻觉。</p>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 3.2</span>Chat Completion 协议：AI 应用的 HTTP</h2>
+      <p>OpenAI 在 2023 年定的这套 API 形状，如今是事实标准——Ollama、vLLM、DeepSeek、Qwen、各推理框架全部兼容。学会它 = 学会与所有模型服务对话。请求就三个核心字段：</p>
+      <pre data-lang="json" data-path="POST {base_url}/v1/chat/completions 请求体">
+{
+  "model": "qwen3:4b",
+  "stream": true,
+  "messages": [
+    { "role": "system",    "content": "你是企业运维助手，回答要简洁。" },
+    { "role": "user",      "content": "服务器 CPU 飙高怎么排查？" },
+    { "role": "assistant", "content": "先 top 看进程..." },
+    { "role": "user",      "content": "如果是 java 进程呢？" }
+  ]
+}</pre>
+      <div class="code-notes"><ul>
+        <li><code>system</code>：人设与规则，用户看不到，优先级最高——第 4 章 RAG 的检索资料、第 5 章 Agent 的工具说明书全都注入在这里。</li>
+        <li><code>user</code> / <code>assistant</code> 交替构成对话历史。</li>
+        <li><b>最重要的认知：这是无状态服务</b>。模型侧没有 session，「记住上文」是靠客户端把全部历史每次重发。所谓「多轮对话」是一个前端拼数组的假象。</li>
+      </ul></div>
+
+      <div class="analogy">
+        <div class="tag">前端类比</div>
+        <p>和 HTTP 无状态 + JWT 的关系一模一样：服务器不存会话，每个请求自带完整上下文。你项目里 <code>src/pages/ChatPage.tsx</code> 发消息前把 <code>messages</code> 数组整个带上，就是「客户端持有状态」的体现。这也解释了为什么聊天越长越贵、越慢——prompt_tokens 随历史线性增长。</p>
+      </div>
+
+      <p>响应分两种形态。非流式一次性返回完整 JSON；流式则是第 2 章讲过的 SSE，每帧一个增量：</p>
+      <pre data-lang="json" data-path="流式响应的一帧（SSE data: 后面的部分）">
+{ "choices": [ { "delta": { "content": "先" }, "finish_reason": null } ] }
+// ...若干帧后，最后一帧：
+{ "choices": [ { "delta": {}, "finish_reason": "stop" } ],
+  "usage": { "prompt_tokens": 156, "completion_tokens": 89, "total_tokens": 245 } }</pre>
+      <div class="code-notes"><ul>
+        <li><code>delta.content</code> 是本帧新增的文本，前端 append 即得打字机。</li>
+        <li><code>finish_reason</code>：<code>stop</code> 正常结束 / <code>length</code> 撞到 max_tokens / <code>tool_calls</code> 模型要调工具（第 5 章主角）。</li>
+        <li><code>usage</code> 只在最后出现，且 OpenAI 兼容流<b>必须显式传 <code>stream_options: {"include_usage": true}</code> 才给</b>——这是本项目踩过的真坑，代码在 <code>_build_openai_body</code> 里。</li>
+      </ul></div>
+
+      <h2 class="sec-t"><span class="no">SECTION 3.3</span>Ollama：把模型跑在自己机器上</h2>
+      <p>Ollama 之于模型，约等于 Docker 之于镜像：<code>ollama pull qwen3:4b</code> 拉权重，<code>ollama run</code> 交互式跑，后台常驻一个服务进程监听 <b>11434</b> 端口。私有化部署（本项目的卖点之一）的地基就是它。</p>
+      <table class="cmp-table">
+        <tr><th>命令</th><th>作用</th><th>Docker 对应物</th></tr>
+        <tr><td><code>ollama pull qwen3:4b</code></td><td>下载模型权重到本地</td><td><code>docker pull</code></td></tr>
+        <tr><td><code>ollama list</code></td><td>看本地有哪些模型</td><td><code>docker images</code></td></tr>
+        <tr><td><code>ollama run qwen3:4b</code></td><td>命令行交互对话</td><td><code>docker run -it</code></td></tr>
+        <tr><td><code>ollama ps</code></td><td>看当前加载在显存/内存里的模型</td><td><code>docker ps</code></td></tr>
+      </table>
+      <p>模型名里的 <code>4b</code> 是参数量（40 亿），标签里常见的 <code>q4_K_M</code> 是<b>量化</b>等级——把 16 位浮点权重压成 4 位整数，显存占用约砍到 1/4，精度小幅下降。这就是 8GB 内存的开发机也能跑 LLM 的原因。</p>
+      <p>关键工程事实：Ollama 同时开两套 API——</p>
+      <ul>
+        <li><b>原生 API</b>：<code>POST /api/chat</code>，返回格式是 <b>NDJSON</b>（一行一个 JSON，换行分隔），字段名也是自己的方言（<code>message.content</code>、<code>eval_count</code>）；</li>
+        <li><b>OpenAI 兼容层</b>：<code>POST /v1/chat/completions</code>，标准 SSE。兼容层某些能力滞后（如多模态图片输入），所以本项目两条路都接——这正是 providers.py 存在的意义。</li>
+      </ul>
+
+      <div class="try-it">
+        <div class="tag">动手实验 1 · 两套 API 肉眼对比</div>
+        <p>分别调 Ollama 的原生接口和 OpenAI 兼容接口，观察报文差异（这个差异就是 providers.py 要抹平的东西）：</p>
+        <pre data-lang="bash" data-path="WSL 终端（Ollama 跑在 Windows 侧时把 localhost 换成主机 IP）">
+# ① 原生 API：注意返回是"一行一个 JSON"（NDJSON）
+curl -s http://localhost:11434/api/chat -d '{
+  "model": "qwen3:4b", "stream": true,
+  "messages": [{"role": "user", "content": "1+1=?"}]
+}'
+
+# ② OpenAI 兼容 API：注意每行带 data: 前缀（SSE）
+curl -sN http://localhost:11434/v1/chat/completions \
+  -H "Content-Type: application/json" -d '{
+  "model": "qwen3:4b", "stream": true,
+  "messages": [{"role": "user", "content": "1+1=?"}]
+}'</pre>
+        <p class="muted">①的每行形如 <code>{"message":{"content":"2"},"done":false}</code>；②形如 <code>data: {"choices":[{"delta":{"content":"2"}}]}</code>。同一个模型、两种报文方言。</p>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 3.4</span>读代码：providers.py 的协议归一（适配器模式）</h2>
+      <p>现在带着「两种方言」的认知读 <code>server/services/providers.py</code>。它对上层暴露统一的 <code>create_chat_completion(config, payload)</code>，内部做四件事：<b>选路 → 组包 → 转发 → 归一</b>。</p>
+
+      <h3>① 选路：URL 规整 + WSL 探测兜底</h3>
+      <pre data-lang="python" data-path="server/services/providers.py（真实代码）">
+def _normalize_urls(config: ProviderConfig) -> tuple[str, str]:
+    base_url = config.provider_base_url.rstrip("/")
+    if config.provider_type == "ollama":
+        if base_url.endswith("/v1"):
+            return base_url, base_url[:-3]      # 同时算出两个端点
+        return f"{base_url}/v1", base_url
+    return base_url, base_url</pre>
+      <div class="code-notes"><ul>
+        <li>用户不管填 <code>http://host:11434</code> 还是 <code>http://host:11434/v1</code>，这里都归一出「OpenAI 兼容端点」和「原生端点」两个地址，后续按需取用。<b>对用户宽容，对内部严格</b>——你写前端表单校验时的同款哲学。</li>
+        <li>另一个函数 <code>_candidate_configs</code> 处理了一个真实痛点：后端跑在 WSL 里时，用户填的 <code>localhost</code> 指向 WSL 自己而不是 Windows 宿主机（Ollama 在那边）。它检测 WSL 环境、用 <code>ip route</code> 拿默认网关 IP，生成一个候选配置做兜底重试。这是「在自己机器上真部署过」才会写出的代码，面试值得主动讲。</li>
+      </ul></div>
+
+      <h3>② 组包：同一个 payload 的两种方言</h3>
+      <pre data-lang="python" data-path="server/services/providers.py（真实代码，节选对照）">
+def _build_openai_body(config, payload) -> dict:
+    messages = _with_system_prompt(payload["messages"], payload.get("system_prompt"))
+    body = {
+        "model": payload["model"],
+        "messages": messages,
+        "stream": payload.get("stream", True),
+        "temperature": payload.get("temperature", 0.7),
+        "max_tokens": payload.get("max_tokens", 4096),
+    }
+    if body["stream"]:
+        body["stream_options"] = {"include_usage": True}   # 踩坑换来的一行
+    return body
+
+def _build_ollama_body(payload) -> dict:
+    # ...把 OpenAI 的多模态 content 数组拆成 Ollama 的 content + images...
+    body = {
+        "model": payload["model"],
+        "messages": ollama_messages,
+        "stream": payload.get("stream", True),
+        "options": {                                # 参数名都不一样：
+            "temperature": payload.get("temperature", 0.7),
+            "num_predict": payload.get("max_tokens", 4096),   # max_tokens → num_predict
+        },
+    }
+    return body</pre>
+      <div class="code-notes"><ul>
+        <li>对照看差异：OpenAI 的 <code>max_tokens</code> 在 Ollama 原生叫 <code>options.num_predict</code>；图片在 OpenAI 是 content 数组里的 <code>image_url</code>，在 Ollama 是独立的 <code>images: [base64]</code> 字段。</li>
+        <li>这就是经典<b>适配器模式</b>：上层只说普通话（内部统一 payload），两个 builder 分别翻译成方言。以后要接 vLLM、DeepSeek 云端 API？零改动——它们说 OpenAI 方言，走现成的分支。</li>
+      </ul></div>
+
+      <h3>③ 归一：NDJSON → SSE 的流式转换器</h3>
+      <p>最有含金量的一段。Ollama 原生流是 NDJSON，前端只认 OpenAI SSE，中间这层翻译要处理「TCP chunk 不齐行」的经典问题：</p>
+      <pre data-lang="python" data-path="server/services/providers.py（真实代码）">
+async def _stream_ollama_response(response: httpx.Response) -> AsyncIterator[bytes]:
+    buffer = ""
+    async for chunk in response.aiter_text():
+        buffer += chunk
+        lines = buffer.split("\n")
+        buffer = lines.pop() or ""          # 最后一段可能是半行，留到下一轮
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            parsed = json.loads(stripped)
+
+            content = parsed.get("message", {}).get("content", "")
+            if content:
+                yield _format_sse_chunk(delta=content)       # 翻译成 OpenAI 帧
+
+            if parsed.get("done") is True:
+                yield _format_sse_chunk(finish_reason="stop",
+                                        usage=_ollama_usage(parsed))
+                yield b"data: [DONE]\n\n"
+                return</pre>
+      <div class="code-notes"><ul>
+        <li><b>buffer 半行处理</b>：网络 chunk 的边界和 JSON 行的边界无关，一行 JSON 可能劈在两个 chunk 里。攒 buffer、按 <code>\n</code> 切、<b>把最后一段（可能不完整）塞回 buffer</b>——你在前端解析 SSE 时写过一模一样的逻辑（<code>src/apis/streaming.ts</code>），这是流式解析的通用范式。</li>
+        <li><code>_ollama_usage</code> 把 Ollama 的 <code>prompt_eval_count / eval_count</code> 改名成 OpenAI 的 <code>prompt_tokens / completion_tokens</code>——连计量字段都归一，第 7 章的用量观测才能对两种上游一视同仁。</li>
+        <li>出口统一为 <code>data: [DONE]</code> 收尾，前端一套解析器通吃两种上游。</li>
+      </ul></div>
+
+      <div class="keypoint">
+        <div class="tag">架构收益</div>
+        <p>这层归一是全项目的「腰」：上层（chat_proxy、agent_runner、RAG、评测脚本）全部只依赖统一接口，<b>模型服务可以随时从本机 Ollama 换成公司 GPU 集群的 vLLM，改一个 base_url 配置，其余零改动</b>。面试讲架构时，这是比任何名词都有力的一句话。</p>
+      </div>
+
+      <div class="try-it">
+        <div class="tag">动手实验 2 · 验证归一效果</div>
+        <p>把 provider 配置在 Ollama 原生和 OpenAI 兼容之间切换，观察前端行为完全一致：</p>
+        <pre data-lang="bash" data-path="WSL 终端 · 项目根目录">
+# 后端跑起来后，经由本项目转发调用（注意与实验 1 直连的报文对比）
+curl -sN http://localhost:8000/api/chat/completions \
+  -H "Content-Type: application/json" -d '{
+  "model": "qwen3:4b", "stream": true,
+  "messages": [{"role": "user", "content": "用一句话解释token"}]
+}'
+# 无论 provider_type 配的是 ollama 还是 openai，
+# 这里吐出来的永远是标准 OpenAI SSE 帧 + data: [DONE]</pre>
+      </div>
+
+      <div class="iv-zone">
+        <div class="zone-head"><span class="ic">面</span><h2>面试官视角 · 本章问答</h2><span class="cnt"></span></div>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q1</span>解释一下 temperature 的原理，什么场景设多少？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「模型输出的是词表上的概率分布，采样前会把 logits 除以 temperature 再做 softmax：T→0 时分布趋向 one-hot（永远选最大概率，近似确定）；T 越大分布越平（长尾词被选中的机会变大，输出更多样）。场景：创意写作 0.7–1.0；<b>结构化抽取、分类、JSON 输出、评分一律 0–0.2</b>。我项目里两个真实例子：Grader 给检索结果打分用 temperature=0，标题生成用 0.3。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q2</span>LLM API 是无状态的，那多轮对话怎么实现？成本上有什么含义？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「客户端每轮把完整 messages 数组重发，模型侧没有 session——和 HTTP 无状态 + 客户端带 token 一个道理。成本含义：prompt_tokens 随轮数线性增长，长对话越聊越贵、首 token 延迟越来越高。工程对策：历史截断（只带最近 N 轮）、摘要压缩（把老历史让 LLM 压成一段）、以及各厂商的 prompt caching（相同前缀打折）。我的项目在 RAG 场景还做了多轮改写：不带全部历史去检索，而是把最后一问改写成自包含查询。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q3</span>为什么要自己写 providers.py，不直接用 OpenAI SDK？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「三个原因：<b>需求特殊</b>——我要同时支持 Ollama 原生 API（兼容层的多模态支持滞后）和 OpenAI 兼容端点，SDK 只覆盖后者；<b>控制流式管道</b>——我要在流中间插入 RAG sources 帧、聚合 usage、做 WSL 网络兜底重试，裸 httpx 比 SDK 的封装更透明；<b>依赖极简</b>——私有化部署场景，每少一个依赖就少一分供应链风险。当然如果只接云端标准 API，用 SDK 是更省事的选择，我不排斥。」</p>
+            <p class="followup">追问预判：「接入一个新的模型厂商要改多少代码？」→ 答：说 OpenAI 方言的厂商（DeepSeek/Qwen/vLLM）改配置即可，零代码；完全自有协议的才需要加一对 build_body/stream 函数，约百行。</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q4</span>本地模型（Ollama）和云端 API 怎么选型？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「按三个维度：<b>数据敏感性</b>——运维日志、内部文档不出内网是硬约束，这是我项目选本地的首要原因；<b>成本模型</b>——本地是固定成本（一张卡）+ 零边际，云端是零固定 + 按 token 线性，量大或长期跑本地划算；<b>能力上限</b>——云端旗舰模型能力仍显著强于本地 4B/7B，复杂推理任务差距明显。我的架构答案是不二选一：providers 层协议归一，敏感流量走本地、通用高难任务可路由到云端，切换是配置级的。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q5</span>模型量化是什么？q4 和 fp16 有什么区别？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「量化是把权重从高精度浮点（fp16，每参数 2 字节）压缩到低位宽整数（q4，约 0.5 字节），显存占用约为 1/4：7B 模型 fp16 要 14GB，q4 只要 4GB 左右，消费级硬件就能跑。代价是精度损失——简单对话几乎无感，数学/代码等精细任务会有可测的下降。Ollama 默认拉的就是 q4_K_M 这类量化版。生产选型时我会在评测集上跑量化前后的对比再决定，不拍脑袋。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q6</span>流式响应里 usage 拿不到，你怎么排查的？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「真实踩坑：非流式响应自带 usage，流式却一直是空。排查路径：先 curl 直连上游确认不是我的转发层丢帧 → 发现上游根本没发 usage 帧 → 查 OpenAI API 文档，流式必须显式传 <code>stream_options: {"include_usage": true}</code>，usage 会作为 finish 之后的<b>额外一帧</b>下发 → 前端解析器原本收到 finish_reason=stop 就 break，还要改成等到 [DONE] 再收尾。一个功能补了后端请求体、前端解析器两处。这种坑只有真做过 LLMOps 的人才踩过。」</p>
+          </div>
+        </details>
+      </div>
+
+      <div class="recap">
+        <div class="r-head">本章小结 · 装进口袋的 6 句话</div>
+        <div class="r-body"><ul>
+          <li>LLM = <b>下一个 token 的概率函数</b>；生成是循环采样，流式是循环里每圈发一帧。</li>
+          <li>token 是计量单位：中文约 1–2 token/字；<b>费用、限速、窗口全按它算</b>。</li>
+          <li>temperature 调分布尖锐度：判断/抽取用 0，创作用 0.7+；它救不了幻觉。</li>
+          <li>Chat API 无状态，多轮 = 客户端全量重发历史，长对话线性变贵。</li>
+          <li>Ollama ≈ 模型界 Docker，双 API：原生 NDJSON 方言 + OpenAI 兼容 SSE。</li>
+          <li><code>providers.py</code> = 适配器：选路 → 组包（两种方言）→ NDJSON→SSE 归一 → usage 字段改名，上层零感知换模型。</li>
+        </ul></div>
+      </div>
+
+      <div class="ch-nav" data-auto></div>
+    </article>
+  </main>
+</div>
+<script src="assets/tutorial.js"></script>
+</body>
+</html>

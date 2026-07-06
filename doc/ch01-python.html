@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>01 · Python 速成 —— 面向 Java/TS 老手 · MyOpenWeb 修炼手册</title>
+<link rel="stylesheet" href="assets/tutorial.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <main class="content">
+    <article class="article">
+
+      <div class="ch-head">
+        <div class="ch-eyebrow"><span class="badge">CH 01</span><span class="part">第一部分 · 基础</span></div>
+        <h1>Python 速成<br>—— 写给 19 年 Java/TS 老手</h1>
+        <p class="lede">你不需要「学 Python」，你需要的是一张<b>从已知语言到 Python 的映射表</b>。这一章不讲编程基础（你比大多数 Python 程序员的工程功底都好），只讲差异点，并且每个语法点都直接指向 <code>server/</code> 目录里的真实代码。</p>
+        <div class="ch-meta"><span>预计 3–4 小时</span><span>难度 ★☆☆☆☆</span><span>对应源码 server/repositories/、server/db.py</span></div>
+      </div>
+
+      <div class="goals">
+        <h2>学完本章你能</h2>
+        <ul>
+          <li>把 Python 语法<b>逐条映射</b>到你熟悉的 TS/Java 概念，见到不慌</li>
+          <li>看懂本项目代码里的全部「陌生符号」：<code>-&gt;</code>、<code>@</code>、<code>yield</code>、<code>with</code>、<code>str | None</code></li>
+          <li>理解 <b>venv + pip</b> 的依赖管理（≈ node_modules + npm）并能自己搭环境</li>
+          <li>独立逐行读懂 <code>server/repositories/memories.py</code>（本章会带你读一遍）</li>
+        </ul>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 1.1</span>心态设定：Python 对你来说是「第五门方言」</h2>
+      <p>你已经会 Java、TypeScript、JavaScript、Kotlin。Python 和它们同属「命令式 + 面向对象 + 一点函数式」家族，<b>90% 的概念完全一致</b>，只是拼写不同。真正的差异只有三处：</p>
+      <ul>
+        <li><b>缩进即语法</b>：没有 <code>{ }</code>，用 4 空格缩进划分代码块。你写惯了 Prettier 格式化的代码，这其实是把你已有的习惯变成了强制规定。</li>
+        <li><b>动态类型 + 可选标注</b>：默认像 JS 一样松，但现代 Python（含本项目）全部写类型标注，读起来和 TS 几乎一样。</li>
+        <li><b>没有编译步骤</b>：<code>python xx.py</code> 直接跑，改完即生效（≈ ts-node / nodemon 的体验）。</li>
+      </ul>
+
+      <div class="analogy">
+        <div class="tag">前端类比</div>
+        <p>把 Python 当成「没有花括号的 TypeScript + 自带标准库的 Node」。<code>pip</code> ≈ <code>npm</code>，<code>venv</code> ≈ <code>node_modules</code> 的隔离思想，<code>requirements.txt</code> ≈ <code>package.json</code> 的 dependencies 字段，<code>uvicorn</code> ≈ <code>node server.js</code> 那个进程。</p>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 1.2</span>环境与工具链：venv / pip / uvicorn</h2>
+      <p>前端的依赖装在项目里的 <code>node_modules</code>，天然隔离。Python 的包默认装到<b>全局</b>，所以要手动创建「虚拟环境」（venv）来隔离——本质是在项目里放一个独立的 Python 解释器 + 独立的包目录。</p>
+
+      <table class="cmp-table">
+        <tr><th>你要做的事</th><th>Node/前端世界</th><th>Python 世界</th></tr>
+        <tr><td>初始化隔离环境</td><td><code>npm init</code>（自动隔离）</td><td><code>python -m venv .venv</code></td></tr>
+        <tr><td>进入环境</td><td>不需要</td><td><code>source .venv/bin/activate</code></td></tr>
+        <tr><td>装依赖</td><td><code>npm install axios</code></td><td><code>pip install fastapi</code></td></tr>
+        <tr><td>依赖清单</td><td><code>package.json</code></td><td><code>requirements.txt</code></td></tr>
+        <tr><td>按清单全装</td><td><code>npm install</code></td><td><code>pip install -r requirements.txt</code></td></tr>
+        <tr><td>启动开发服务器</td><td><code>vite</code> / <code>nodemon</code></td><td><code>uvicorn server.main:app --reload</code></td></tr>
+        <tr><td>REPL 调试台</td><td><code>node</code> 回车</td><td><code>python</code> 回车</td></tr>
+      </table>
+
+      <div class="pitfall">
+        <div class="tag">高频坑</div>
+        <p>「明明 pip install 了，import 还是报 ModuleNotFoundError」——99% 是因为<b>装到了另一个 Python 环境里</b>。先运行 <code>which python</code>（或 <code>pip -V</code>）确认当前用的是 <code>.venv</code> 里的解释器。这相当于前端的「全局 npm 和项目 npm 版本打架」。</p>
+      </div>
+
+      <div class="try-it">
+        <div class="tag">动手实验 1</div>
+        <p>在 WSL 里进入本项目并确认环境（本项目环境已建好，直接激活即可）：</p>
+        <pre data-lang="bash" data-path="WSL 终端">
+cd /mnt/d/ai_one/MyOpenWeb
+source .venv/bin/activate      # 提示符出现 (.venv) 前缀即成功
+python -V                      # Python 3.12.x
+pip list | grep fastapi        # 能看到 fastapi 及版本号
+uvicorn server.main:app --reload --port 8000   # ≈ npm run dev</pre>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 1.3</span>语法映射总表：15 分钟过一遍</h2>
+      <p>下面每一行都值得扫一眼，右列的写法全部在本项目源码里出现过。</p>
+
+      <h3>变量、类型与字符串</h3>
+      <table class="cmp-table">
+        <tr><th>概念</th><th>TypeScript</th><th>Python（本项目写法）</th></tr>
+        <tr><td>变量声明</td><td><code>const now = Date.now()</code></td><td><code>now = int(time.time() * 1000)</code></td></tr>
+        <tr><td>类型标注</td><td><code>id: string</code></td><td><code>id: str</code></td></tr>
+        <tr><td>可空类型</td><td><code>title: string | null</code></td><td><code>title: str | None</code></td></tr>
+        <tr><td>数组</td><td><code>list: Memory[]</code></td><td><code>rows: list[Memory]</code></td></tr>
+        <tr><td>对象/映射</td><td><code>Record&lt;string, any&gt;</code></td><td><code>dict[str, Any]</code></td></tr>
+        <tr><td>模板字符串</td><td><code>`hello ${name}`</code></td><td><code>f"hello {name}"</code></td></tr>
+        <tr><td>布尔值</td><td><code>true / false / null</code></td><td><code>True / False / None</code>（首字母大写！）</td></tr>
+        <tr><td>相等判断</td><td><code>===</code></td><td><code>==</code>（Python 没有 == 陷阱，就是严格比较）</td></tr>
+        <tr><td>逻辑运算</td><td><code>&amp;&amp; || !</code></td><td><code>and or not</code>（英文单词）</td></tr>
+      </table>
+
+      <h3>函数与控制流</h3>
+      <table class="cmp-table">
+        <tr><th>概念</th><th>TypeScript</th><th>Python</th></tr>
+        <tr><td>函数定义</td><td><code>function f(x: number): string {}</code></td><td><code>def f(x: int) -&gt; str:</code></td></tr>
+        <tr><td>箭头函数</td><td><code>(x) =&gt; x * 2</code></td><td><code>lambda x: x * 2</code>（只能一行）</td></tr>
+        <tr><td>默认参数</td><td><code>f(a = 1)</code></td><td><code>def f(a=1):</code></td></tr>
+        <tr><td>命名参数调用</td><td>传对象 <code>f({ id, name })</code></td><td>原生支持 <code>f(id=x, name=y)</code></td></tr>
+        <tr><td>三元表达式</td><td><code>a ? b : c</code></td><td><code>b if a else c</code>（顺序不同！）</td></tr>
+        <tr><td>for-of</td><td><code>for (const x of arr)</code></td><td><code>for x in arr:</code></td></tr>
+        <tr><td>map/filter</td><td><code>arr.filter(x =&gt; x.ok).map(x =&gt; x.id)</code></td><td><code>[x.id for x in arr if x.ok]</code>（列表推导式）</td></tr>
+        <tr><td>解构</td><td><code>const [a, b] = pair</code></td><td><code>a, b = pair</code></td></tr>
+        <tr><td>展开</td><td><code>{...obj, extra: 1}</code></td><td><code>{**obj, "extra": 1}</code></td></tr>
+        <tr><td>异常</td><td><code>try / catch / finally / throw</code></td><td><code>try / except / finally / raise</code></td></tr>
+      </table>
+
+      <div class="keypoint">
+        <div class="tag">必须内化的一条</div>
+        <p><b>列表推导式</b> <code>[x.id for x in arr if x.ok]</code> 是 Python 代码里出现频率最高的「陌生语法」。读法固定为三段：「取什么 <code>x.id</code>」→「从哪来 <code>for x in arr</code>」→「什么条件 <code>if x.ok</code>」。它就是 <code>arr.filter().map()</code> 压成一行。本项目 <code>rag.py</code>、<code>memories.py</code> 里到处都是。</p>
+      </div>
+
+      <h3>类与模块</h3>
+      <table class="cmp-table">
+        <tr><th>概念</th><th>Java / TS</th><th>Python</th></tr>
+        <tr><td>类定义</td><td><code>class Memory extends Base {}</code></td><td><code>class Memory(BaseModel):</code></td></tr>
+        <tr><td>构造函数</td><td><code>constructor(x) { this.x = x }</code></td><td><code>def __init__(self, x): self.x = x</code></td></tr>
+        <tr><td>this</td><td><code>this.title</code></td><td><code>self.title</code>（必须显式写进参数）</td></tr>
+        <tr><td>静态/实例判断</td><td>修饰符 <code>static</code></td><td>第一个参数没有 <code>self</code> 就是普通函数</td></tr>
+        <tr><td>导入</td><td><code>import { x } from "./mod"</code></td><td><code>from server.db import get_db</code></td></tr>
+        <tr><td>默认导出</td><td><code>export default app</code></td><td>没有 default，全靠名字：<code>from server.main import app</code></td></tr>
+        <tr><td>私有约定</td><td><code>private _cache</code></td><td>下划线前缀 <code>_connect()</code>（纯约定，无强制）</td></tr>
+        <tr><td>接口</td><td><code>interface Props {}</code></td><td>没有 interface，用 Pydantic <code>BaseModel</code> 或 <code>Protocol</code></td></tr>
+      </table>
+
+      <div class="analogy">
+        <div class="tag">前端类比</div>
+        <p>本项目 <code>server/db.py</code> 里的 <code>_connect()</code>、<code>rag.py</code> 里的 <code>_normalize()</code>——所有下划线开头的函数相当于你在 TS 模块里<b>没有 export 的内部函数</b>。Python 其实都能 import 到，但业内默契是「下划线开头 = 别在外面用」。</p>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 1.4</span>四个「本项目读码关键」语法点</h2>
+      <p>下面四个语法点在 <code>server/</code> 里密集出现，每个都配真实代码。啃完这四个，源码就没有读不懂的行了。</p>
+
+      <h3>① 装饰器 <code>@xxx</code> —— 就是 Java 注解 / NestJS 装饰器</h3>
+      <p>装饰器本质是「一个接收函数、返回加工后函数的高阶函数」，写在 <code>@</code> 后面挂到目标上方。你在 NestJS 里写过 <code>@Get()</code>、在 Java 里写过 <code>@GetMapping</code>，是同一个思想：<b>用声明式标记给函数附加行为</b>。</p>
+      <pre data-lang="python" data-path="server/routers/memories.py（真实代码）">
+@router.get("", response_model=MemoriesResponse)
+def get_memories() -> MemoriesResponse:
+    return MemoriesResponse(memories=list_memories())</pre>
+      <div class="code-notes"><ul>
+        <li><code>@router.get("")</code>：把下面这个函数注册为 <code>GET /api/memories</code> 的处理器——和 NestJS 的 <code>@Get()</code> 一字不差的思想。</li>
+        <li><code>-&gt; MemoriesResponse</code>：返回类型标注，同时告诉 FastAPI 用这个模型序列化响应（详见第 2 章）。</li>
+      </ul></div>
+
+      <h3>② <code>with</code> 语句 —— 自动释放资源的 try-finally</h3>
+      <p>Java 有 try-with-resources，Kotlin 有 <code>use { }</code>，Python 的对应物是 <code>with</code>。进入代码块时拿资源，无论正常退出还是抛异常都保证释放。</p>
+      <pre data-lang="python" data-path="server/repositories/memories.py（真实代码）">
+def list_memories() -> list[Memory]:
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM memories
+            ORDER BY enabled DESC, updated_at DESC
+            """
+        ).fetchall()
+    return [_row_to_memory(row) for row in rows]</pre>
+      <div class="code-notes"><ul>
+        <li><code>with get_db() as conn:</code>：拿到数据库连接，代码块结束时自动 commit + close（实现见下一个语法点）。</li>
+        <li><code>"""..."""</code>：三引号多行字符串 ≈ TS 的反引号模板串，这里用来写 SQL。</li>
+        <li>最后一行就是刚才说的列表推导式：把每行数据库记录转成 <code>Memory</code> 模型，等价 <code>rows.map(_rowToMemory)</code>。</li>
+      </ul></div>
+
+      <h3>③ <code>yield</code> 与 <code>@contextmanager</code> —— 生成器的两种用途</h3>
+      <p><code>yield</code> 和 JS 的 generator function 里的 <code>yield</code> 是同一个东西：函数执行到这里「暂停、交出一个值，等下次再继续」。本项目用它实现了上面 <code>get_db()</code> 的「自动释放」：</p>
+      <pre data-lang="python" data-path="server/db.py（真实代码）">
+@contextmanager
+def get_db() -> Iterator[sqlite3.Connection]:
+    conn = _connect()
+    try:
+        yield conn        # ← with 块里的代码在这一行"中间"执行
+        conn.commit()
+    finally:
+        conn.close()</pre>
+      <div class="code-notes"><ul>
+        <li>读法：<code>yield</code> 之前 = 进入 <code>with</code> 时执行（建连接）；<code>yield</code> 之后 = 退出 <code>with</code> 时执行（提交）；<code>finally</code> 保证连接必然关闭。</li>
+        <li>这个模式在前端最接近的东西是 React 的 <code>useEffect(() =&gt; { setup; return cleanup })</code>——一个函数同时描述「进场」和「离场」。</li>
+        <li>第 2 章讲 SSE 时你会看到 <code>yield</code> 的另一个用途：<b>一边生成数据一边发给客户端</b>（流式响应），和这里的资源管理是同一个语法、不同的用法。</li>
+      </ul></div>
+
+      <h3>④ <code>async / await</code> —— 和 JS 几乎一样，但没有 Promise 对象</h3>
+      <p>Python 3.5+ 的 <code>async def</code> / <code>await</code> 和 JS 语义相同：单线程事件循环上的协作式并发。差异只在生态用词：JS 的 Promise ≈ Python 的 coroutine / Task，<code>Promise.all</code> ≈ <code>asyncio.gather</code>。</p>
+      <pre data-lang="python" data-path="server/routers/chat_proxy.py（真实代码，节选）">
+@router.post("/chat/completions")
+async def chat_completions(payload: ChatCompletionRequest):
+    config = get_provider_config()
+    data = payload.model_dump()
+
+    sources: list[dict[str, Any]] = []
+    if data.get("knowledge_id"):
+        system_prompt, sources = await retrieve_for_chat(config, data)
+        data["system_prompt"] = system_prompt
+
+    response = await create_chat_completion(config, data)
+    return response</pre>
+      <div class="code-notes"><ul>
+        <li><code>async def</code> 的路由函数可以 <code>await</code> 网络调用（请求 Ollama），期间事件循环去处理别的请求——和 Node 的非阻塞 IO 完全同一模型。</li>
+        <li><code>system_prompt, sources = await ...</code>：函数返回元组，左边直接解构，≈ <code>const [prompt, sources] = await ...</code>。</li>
+        <li><code>data.get("knowledge_id")</code>：字典安全取值，键不存在返回 <code>None</code> 而不是抛错，≈ <code>data["knowledge_id"] ?? null</code>。</li>
+      </ul></div>
+
+      <div class="pitfall">
+        <div class="tag">与 JS 的关键差异</div>
+        <p>JS 里调用 async 函数「不 await 也会执行」（返回 pending Promise）；Python 里 <b>coroutine 不 await 就完全不会执行</b>，只会得到一个协程对象和一条警告。忘写 <code>await</code> 是 Python 新手第一大坑。</p>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 1.5</span>实战读码：把 memories 仓储层从头读到尾</h2>
+      <p>现在你已具备全部语法知识。打开 <code>server/repositories/memories.py</code>（102 行），对照下面的导读自己读一遍：</p>
+      <pre data-lang="python" data-path="server/repositories/memories.py（真实代码，节选）">
+def _now_ms() -> int:
+    return int(time.time() * 1000)          # ≈ Date.now()
+
+def _row_to_memory(row) -> Memory:          # ≈ 私有的 rowMapper
+    return Memory(
+        id=row["id"],
+        content=row["content"],
+        category=row["category"],
+        enabled=bool(row["enabled"]),        # SQLite 存 0/1，转 bool
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+def create_memory(payload: MemoryCreate) -> Memory:
+    now = _now_ms()
+    memory_id = uuid.uuid4().hex             # ≈ crypto.randomUUID()
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO memories (id, content, category, enabled, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (memory_id, payload.content.strip(), payload.category,
+             1 if payload.enabled else 0, now, now),
+    )
+        row = conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
+    return _row_to_memory(row)</pre>
+      <div class="code-notes"><ul>
+        <li>整个文件没有类、没有框架魔法——就是「函数 + SQL + 模型转换」。这一层等价于你在 Java 里写过无数遍的 DAO。</li>
+        <li><code>VALUES (?, ?, ?)</code> 参数化查询防 SQL 注入，与 JDBC PreparedStatement 同理。</li>
+        <li><code>Memory(id=..., content=...)</code>：Pydantic 模型用命名参数构造，≈ <code>new Memory({ id, content })</code>，且构造时自动做类型校验（第 2 章展开）。</li>
+      </ul></div>
+
+      <div class="try-it">
+        <div class="tag">动手实验 2</div>
+        <p>用 Python REPL 直接调用这层代码，绕过 HTTP 亲手摸一下（体会「无编译、即时反馈」）：</p>
+        <pre data-lang="bash" data-path="WSL 终端 · 项目根目录">
+source .venv/bin/activate
+python
+&gt;&gt;&gt; from server.repositories.memories import list_memories, create_memory
+&gt;&gt;&gt; from server.schemas.memory import MemoryCreate
+&gt;&gt;&gt; create_memory(MemoryCreate(content="我在读第一章", category="fact"))
+&gt;&gt;&gt; [m.content for m in list_memories()]     # 列表推导式实战
+&gt;&gt;&gt; exit()</pre>
+        <p class="muted">看到刚插入的内容被查出来，说明你已经能直接操作这个项目的数据层了。</p>
+      </div>
+
+      <div class="iv-zone">
+        <div class="zone-head"><span class="ic">面</span><h2>面试官视角 · 本章问答</h2><span class="cnt"></span></div>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q1</span>你主力是前端/Android，Python 能到什么程度？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p><b>参考答案框架：</b>不要说「会一点」。说：「我的 Python 是在做 MyOpenWeb 后端时练出来的——FastAPI 分层、SQLite 仓储、asyncio 流式、pytest 都实际写过。语言本身对我不是门槛，我 19 年写过 Java/TS/Kotlin，Python 是第五门方言；真正花时间的是 AI 应用的领域知识，这正是这个项目的价值。」</p>
+            <p class="followup">追问预判：「asyncio 和 Node 事件循环有什么区别？」→ 答：模型同为单线程协作式调度；差异是 Python 里 coroutine 必须 await 才执行、且同步阻塞调用（如 requests 库）会卡死整个循环，所以本项目网络调用都走异步或线程池。</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q2</span>Python 的 GIL 是什么？对你的服务有影响吗？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p><b>GIL（全局解释器锁）</b>：CPython 同一时刻只允许一个线程执行 Python 字节码，所以多线程无法利用多核跑 CPU 密集任务。</p>
+            <p><b>结合项目答：</b>「我的服务是典型 IO 密集型——大部分时间在等 Ollama 推理返回，GIL 期间会释放，asyncio 单进程就能扛并发。真正 CPU 重的部分（embedding 向量计算）交给 numpy，它在 C 层执行也会释放 GIL。如果要横向扩容，uvicorn 可以开多 worker 进程绕开 GIL。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q3</span>解释一下你项目里 get_db() 的实现原理。<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「<code>@contextmanager</code> 装饰的生成器函数：<code>yield</code> 前建立 SQLite 连接（进入 with 时执行），<code>yield</code> 把连接交给业务代码，业务代码跑完回到 <code>yield</code> 之后 commit，finally 里保证 close。等价 Java 的 try-with-resources。好处是仓储层每个函数都不可能忘记释放连接。」</p>
+            <p class="followup">追问预判：「每个请求都开新连接，性能可以吗？」→ 答：SQLite 是进程内嵌入式库，"连接"只是打开文件句柄，开销微小；换 PostgreSQL 时才需要引入连接池（如 asyncpg pool），这是我 roadmap 里 pgvector 迁移的一部分。</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q4</span>Python 类型标注是强制的吗？你们怎么保证类型安全？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「运行时不强制——标注本身只是元数据，解释器不检查。但有两层保障：<b>静态层</b>用 mypy/Pyright 这类 checker 在 CI 或 IDE 里查（≈ tsc --noEmit）；<b>运行时层</b>在系统边界用 Pydantic 真校验——请求体不符合模型直接 422。我的项目所有 API 入参出参都过 Pydantic，内部函数靠标注 + IDE 提示。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q5</span>列表推导式和 map/filter 你选哪个？为什么？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「Python 社区惯例是推导式优先：<code>[f(x) for x in xs if cond(x)]</code> 一眼看清取什么、从哪来、什么条件；Python 的 <code>map/filter</code> 返回惰性迭代器还要包 <code>list()</code>，反而啰嗦。逻辑复杂到推导式一行放不下时，就老老实实写 for 循环——可读性大于炫技。」</p>
+          </div>
+        </details>
+      </div>
+
+      <div class="recap">
+        <div class="r-head">本章小结 · 装进口袋的 6 句话</div>
+        <div class="r-body"><ul>
+          <li>Python = 没有花括号的 TS：<code>def f(x: int) -&gt; str</code> 读起来和 TS 函数签名一回事。</li>
+          <li><b>venv ≈ node_modules</b>，pip ≈ npm，requirements.txt ≈ package.json，uvicorn ≈ dev server。</li>
+          <li>列表推导式 = <code>filter().map()</code> 压成一行，读法「取什么 / 从哪来 / 什么条件」。</li>
+          <li>装饰器 <code>@</code> = Java 注解 / NestJS 装饰器：声明式给函数挂行为。</li>
+          <li><code>with</code> + <code>@contextmanager</code>（yield 分隔进场/离场）= try-with-resources。</li>
+          <li>Python 的 async/await 同 JS，唯一大坑：<b>coroutine 不 await 就根本不执行</b>。</li>
+        </ul></div>
+      </div>
+
+      <div class="ch-nav" data-auto></div>
+    </article>
+  </main>
+</div>
+<script src="assets/tutorial.js"></script>
+</body>
+</html>
