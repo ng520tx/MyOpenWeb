@@ -17,14 +17,18 @@
 - **长期记忆**：手动维护偏好/事实/项目记忆，按开关注入 Agent 上下文
 - **全量持久化**：对话、配置、文件、知识库、向量、Agent 日志全部落 SQLite，重启不丢
 
-<!-- 界面预览（录制演示视频后补充 2-3 张截图与视频链接）
 ## 界面预览
 
-| 知识库问答（引用来源） | Agent 工具调用 | 移动端 |
-|---|---|---|
-| ![chat](docs/images/chat.png) | ![agent](docs/images/agent.png) | ![mobile](docs/images/mobile.png) |
+| 知识库问答（引用来源） | Agent 日志分析 |
+|---|---|
+| ![知识库问答带引用来源](docs/images/chat-citations.png) | ![Agent 日志分析](docs/images/agent-log-analysis.png) |
 
-演示视频：[3 分钟完整演示](链接)
+| 移动端·知识库管理 | 移动端·对话 |
+|---|---|
+| ![移动端知识库管理](docs/images/mobile-knowledge.png) | ![移动端对话](docs/images/mobile-chat.png) |
+
+<!-- 演示视频（B 站上传后替换链接并取消注释）
+演示视频：[5 分钟完整演示（RAG 引用/拒答 + Agent 工具 + Docker 部署）](B站链接)
 -->
 
 ## 总体架构

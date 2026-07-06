@@ -13,3 +13,5 @@ server/eval/.data
 .specstory
 .cursor/plans
 tsconfig.tsbuildinfo
+# 演示视频本地保留，README 挂在线链接（B 站 / Release）
+docs/video
