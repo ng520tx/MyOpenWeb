@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>04 · RAG 检索增强全链路 · MyOpenWeb 修炼手册</title>
+<link rel="stylesheet" href="assets/tutorial.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <main class="content">
+    <article class="article">
+
+      <div class="ch-head">
+        <div class="ch-eyebrow"><span class="badge">CH 04</span><span class="part">第二部分 · 核心原理</span></div>
+        <h1>RAG 检索增强全链路<br>—— 从 embedding 到检索自纠错</h1>
+        <p class="lede">RAG 是 AI 应用面试的<b>绝对主战场</b>，也是你项目含金量最高的部分。这一章从「向量是什么」讲到「Agentic 自纠错」，全程对照 <code>server/services/rag.py</code> 的真实实现。读完后，检索链路上每一个环节你都能回答「是什么、为什么、代价是什么」。</p>
+        <div class="ch-meta"><span>预计 6 小时（值得）</span><span>难度 ★★★★☆</span><span>对应源码 server/services/rag.py、tokenize.py、rerank.py、retrieval_grader.py</span></div>
+      </div>
+
+      <div class="goals">
+        <h2>学完本章你能</h2>
+        <ul>
+          <li>手算一次<b>余弦相似度</b>，并解释 embedding 为什么能表达语义</li>
+          <li>说清切片参数 <b>600/100</b> 的权衡逻辑，以及断句优先的实现</li>
+          <li>推导<b>混合检索 + RRF</b> 的融合公式，解释它比分数加权好在哪</li>
+          <li>讲清 <b>rerank（交叉编码器）</b>和<b>检索自纠错（Grader）</b>各自补哪块短板</li>
+          <li>完整背出一条 query 从进入到生成回答经过的 <b>7 个站点</b></li>
+        </ul>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 4.1</span>为什么需要 RAG：给闭卷考生发资料</h2>
+      <p>LLM 有三个先天缺陷：<b>知识截止</b>（训练数据有日期上限）、<b>不知道你的私有数据</b>（公司文档、运维手册没进过训练集）、<b>幻觉</b>（不知道也要编）。重新训练模型太贵，RAG 用工程手段绕过：</p>
+      <div class="keypoint">
+        <div class="tag">一句话定义</div>
+        <p>RAG（Retrieval-Augmented Generation）= 回答之前，先从你的资料库里<b>检索</b>相关片段，把它们塞进 system prompt，让模型「照着资料回答」。模型从闭卷考试变开卷考试——它不需要记住你的运维手册，只需要读懂发到手上的那几页。</p>
+      </div>
+      <p>于是问题从「模型懂不懂」转化成「<b>检索准不准</b>」——这正是 RAG 工程的全部难度所在，也是本章后面 6 个小节的主线。</p>
+
+      <h2 class="sec-t"><span class="no">SECTION 4.2</span>embedding：把语义变成坐标</h2>
+      <p>检索的前提是「计算两段文本有多相关」。字符串匹配显然不够（「CPU 飙高」和「处理器占用率异常」零字重合）。embedding 模型解决这件事：<b>把任意文本映射成一个高维向量（本项目用 bge-m3，1024 维），语义越近的文本，向量方向越接近</b>。</p>
+      <p>「方向接近」用<b>余弦相似度</b>度量。二维空间手算一次，感受它在干嘛：</p>
+      <pre data-lang="python" data-path="纸上手算（二维玩具例子）">
+# 假设 embedding 只有 2 维：
+a = [0.9, 0.1]     # "CPU 使用率过高"
+b = [0.8, 0.2]     # "处理器占用异常"     ← 语义近，方向近
+c = [0.1, 0.9]     # "年会聚餐通知"       ← 语义远，方向远
+
+# 余弦相似度 = 点积 / (模长乘积)，范围 [-1, 1]，越大越相似
+cos(a, b) = (0.9*0.8 + 0.1*0.2) / (0.906 * 0.825) = 0.74 / 0.748 ≈ 0.99
+cos(a, c) = (0.9*0.1 + 0.1*0.9) / (0.906 * 0.906) = 0.18 / 0.821 ≈ 0.22</pre>
+      <div class="analogy">
+        <div class="tag">SQL 直觉</div>
+        <p>向量检索没有魔法，逻辑上等价于一条 SQL：<code>SELECT * FROM chunks ORDER BY cos(embedding, query_vec) DESC LIMIT k</code>。区别只在 <code>cos()</code> 不是数据库内置函数——本项目用 numpy 在内存里算（数据万级够用），换 pgvector 后它真的就变成一条 SQL（<code>ORDER BY embedding &lt;=&gt; query</code>）。把这层窗户纸捅破，向量数据库就不神秘了。</p>
+      </div>
+      <p>看真实实现——一次矩阵乘法算完所有 chunk 的相似度，没有循环：</p>
+      <pre data-lang="python" data-path="server/services/rag.py · query_knowledge（真实代码，节选）">
+matrix = np.asarray([row["embedding"] for row in usable], dtype=np.float32)
+q = np.asarray(query_vec, dtype=np.float32)
+
+matrix_norms = np.linalg.norm(matrix, axis=1)   # 每个chunk向量的模长
+q_norm = np.linalg.norm(q)
+denom = matrix_norms * q_norm
+denom[denom == 0] = 1e-9                        # 防除零
+scores = (matrix @ q) / denom                   # 一次算出 N 个余弦相似度
+
+pool_size = max(top_k * 3, 10)                  # 候选池给后续融合/rerank留余量
+vector_order = [int(i) for i in np.argsort(-scores)[:pool_size]]</pre>
+      <div class="code-notes"><ul>
+        <li><code>matrix @ q</code>：N×1024 的矩阵乘 1024 维向量，一次点积出全部分数——numpy 在 C 层并行，万级 chunk 毫秒出结果。</li>
+        <li>注意候选池取 <code>top_k * 3</code> 而非 top_k：后面 RRF 融合和 rerank 都需要「宽进严出」的余量。这种细节是读过论文/踩过坑的信号。</li>
+        <li>前面还有一个维度过滤（<code>len(row["embedding"]) == query_dim</code>）：换过 embedding 模型的老数据维度对不上，直接跳过并提示重建索引——防御真实运维场景。</li>
+      </ul></div>
+
+      <h2 class="sec-t"><span class="no">SECTION 4.3</span>写路径：切片为什么是 600 字 / 100 重叠</h2>
+      <p>文档不能整篇变一个向量（一篇 1 万字的手册压成 1024 个数，细节全糊了），要先切片（chunking）。切片尺寸是 RAG 第一个要害权衡：</p>
+      <table class="cmp-table">
+        <tr><th>切片</th><th>好处</th><th>代价</th></tr>
+        <tr><td>太小（如 100 字）</td><td>定位精准</td><td>上下文断裂，「答案的前半句在上一片」</td></tr>
+        <tr><td>太大（如 2000 字）</td><td>上下文完整</td><td>向量语义被稀释，检索变糊；塞进 prompt 占爆窗口</td></tr>
+        <tr><td class="y">本项目 600/100</td><td colspan="2">中文技术文档的经验平衡点；100 字重叠让跨边界的句子在两个片里各出现一次，边界信息不丢</td></tr>
+      </table>
+      <pre data-lang="python" data-path="server/services/rag.py · split_text（真实代码）">
+_BREAK_CHARS = ("\n\n", "\n", "。", "！", "？", ". ", "! ", "? ", "；", "; ")
+
+while start < length:
+    end = min(start + chunk_size, length)
+    if end < length:
+        window = text[start:end]
+        break_at = -1
+        for marker in _BREAK_CHARS:              # 按优先级找自然断点
+            pos = window.rfind(marker)
+            if pos > chunk_size * 0.5:           # 断点太靠前就不用（片会太碎）
+                break_at = pos + len(marker)
+                break
+        if break_at > 0:
+            end = start + break_at
+
+    chunks.append(text[start:end].strip())
+    start = max(end - overlap, start + 1)        # 回退 overlap，形成重叠</pre>
+      <div class="code-notes"><ul>
+        <li>不在第 600 字硬切，而是在窗口内<b>从后往前</b>找最优断点：段落 &gt; 换行 &gt; 中文句号 &gt; 英文句号 &gt; 分号。半句话被拦腰斩断是检索质量的隐形杀手。</li>
+        <li><code>pos &gt; chunk_size * 0.5</code>：断点必须在窗口后半段，否则宁可硬切——防止一连串短句把片切得过碎。</li>
+        <li>索引入库时按 <code>EMBED_BATCH = 16</code> 批量调 embedding 接口：一次一条太慢，一次全部容易超时，批处理是所有「调外部服务」的通用工程手法。</li>
+      </ul></div>
+
+      <h2 class="sec-t"><span class="no">SECTION 4.4</span>读路径 ①：混合检索与 RRF 融合</h2>
+      <p>纯向量检索有个著名盲区：<b>精确术语</b>。问「ERR-4032 是什么错误」，向量把它当普通语义（数字编号的语义≈另一个数字编号），常常检不中；而 30 年前的关键词算法 <b>BM25</b>（Elasticsearch 的默认排序）对这种「必须字面命中」的查询是强项。两者互补：</p>
+      <table class="cmp-table">
+        <tr><th></th><th>向量检索</th><th>BM25 关键词</th></tr>
+        <tr><td>「处理器占用异常」→ 命中「CPU 飙高」文档</td><td class="y">强（语义）</td><td>弱（零字重合）</td></tr>
+        <tr><td>「ERR-4032」「fts5」「bge-m3」精确术语</td><td>弱（编号无语义）</td><td class="y">强（字面命中）</td></tr>
+        <tr><td>本项目实现</td><td>numpy 余弦</td><td>SQLite FTS5 虚表（零新增依赖）</td></tr>
+      </table>
+      <p>中文还有一道坎：BM25 按「词」建索引，但中文没有空格分词。本项目 <code>tokenize.py</code> 用 <b>CJK bigram</b>（二字滑窗）解决——「数据库连接」切成「数据/据库/库连/连接」，无需引入 jieba 这类分词依赖，索引和查询用同一套切法即可对上。</p>
+      <p>两路各自排序后怎么合并？<b>RRF（Reciprocal Rank Fusion，倒数排名融合）</b>：</p>
+      <div class="keypoint">
+        <div class="tag">RRF 公式</div>
+        <p>每路榜单上排第 r 名，得分 <code>1/(60+r)</code>，两路分数相加后重排。第 1 名得 1/61≈0.0164，第 10 名得 1/70≈0.0143。<b>只看名次、不看原始分数</b>——因为余弦相似度（0~1）和 BM25 分数（无界）量纲完全不同，直接加权是在比较米和斤；名次是两路唯一公平的共同语言。60 是论文（Cormack et al. 2009）的常规默认。</p>
+      </div>
+      <pre data-lang="python" data-path="server/services/rag.py · _fuse_rrf（真实代码）">
+rrf_scores: dict[str, float] = {}
+for rank, idx in enumerate(vector_order):                 # 向量榜计分
+    chunk_id = usable[idx]["id"]
+    rrf_scores[chunk_id] = rrf_scores.get(chunk_id, 0.0) + 1.0 / (RRF_K + rank + 1)
+
+bm25_ids = search_chunks_bm25(knowledge_id, build_match_query(query), pool_size)
+for rank, chunk_id in enumerate(bm25_ids):                # BM25榜计分
+    if chunk_id not in by_id:
+        continue          # FTS 残留行或维度被过滤的 chunk，跳过
+    rrf_scores[chunk_id] = rrf_scores.get(chunk_id, 0.0) + 1.0 / (RRF_K + rank + 1)
+
+ordered_ids = sorted(rrf_scores, key=lambda cid: -rrf_scores[cid])</pre>
+      <div class="code-notes"><ul>
+        <li>两路都上榜的 chunk 分数叠加，自然浮到最前——「语义和字面双重确认」的结果最可信。</li>
+        <li>实测收益（本项目 40 题评测集，第 7 章详讲）：Hit@4 从纯向量 82.5% → 混合 <b>92.5%</b>，提升主要来自术语类查询。</li>
+      </ul></div>
+
+      <h2 class="sec-t"><span class="no">SECTION 4.5</span>读路径 ②：rerank —— 精排的交叉编码器</h2>
+      <p>embedding 检索是「双塔」结构：query 和 chunk <b>各自独立</b>编码成向量再比距离，快（chunk 向量可以提前算好），但两段文本从未「见过面」，匹配是粗颗粒的。<b>交叉编码器（CrossEncoder）</b>反过来：把 query 和 chunk <b>拼在一起</b>送进模型，逐 token 交叉注意力，输出一个精确的相关性分——准得多，但每对都要现算，慢。</p>
+      <div class="analogy">
+        <div class="tag">前端类比</div>
+        <p>这就是「列表页 + 详情页」的性能策略：先用轻量列表接口（双塔向量）从 10000 条里捞 12 条候选，再对这 12 条调重接口（交叉编码器）精排出最好的 4 条。全量跑重模型不可行，<b>粗排缩小范围 + 精排保证质量</b>，和你做搜索联想的优化一个思路。</p>
+      </div>
+      <p>本项目用 <code>bge-reranker-base</code>，实现上有个值得注意的工程决策——<b>优雅降级</b>：模型加载失败（比如离线环境没下载权重）时 <code>rerank_chunks</code> 返回 <code>None</code>，上层直接用粗排结果，链路不断：</p>
+      <pre data-lang="python" data-path="server/services/rag.py · query_knowledge（真实代码，节选）">
+if use_rerank and candidates:
+    reranked = await rerank_chunks(config.rerank_model, query, candidates)
+    if reranked is not None:          # None = 降级信号，沿用RRF排序
+        candidates = reranked
+
+return candidates[: max(1, top_k)]    # 宽候选池最终裁到 top_k</pre>
+
+      <h2 class="sec-t"><span class="no">SECTION 4.6</span>读路径 ③：多轮改写与检索自纠错（Agentic RAG）</h2>
+      <p>还剩两个真实场景的痛点，也是本项目从「标准 RAG」升级到「Agentic RAG」的部分。</p>
+      <h3>痛点一：多轮指代 —— query rewrite</h3>
+      <p>用户第二轮问「<b>那它</b>的默认端口是多少？」——拿这句去检索必然失败，「它」指什么只有对话历史知道。<code>query_rewrite.py</code> 的做法：检测到跟进型问句（<code>needs_rewrite</code> 启发式判断）时，让 LLM 结合历史把问题改写成自包含形式（「Redis 的默认端口是多少」）再去检索。</p>
+      <h3>痛点二：第一轮检索质量差 —— Grader 自纠错</h3>
+      <p>检索没有百分百命中率。标准 RAG 检回什么用什么，错了就错了；Agentic RAG 引入「评估-重试」循环：</p>
+      <pre data-lang="python" data-path="server/services/rag.py · retrieve_for_chat（真实代码，节选）">
+chunks = await query_knowledge(config, config.embedding_model, knowledge_id, query, top_k)
+
+if config.agentic_retrieval_enabled and chunks:
+    # 自纠错：评一次，最多补检一次（有界，不会失控循环）
+    sufficient, followup = await grade_retrieval(
+        config, str(payload.get("model", "")), query, chunks
+    )
+    if not sufficient:
+        # 二轮至少检 4 条：top_k 很小时，目标片段常排在 2-4 位
+        extra = await query_knowledge(
+            config, config.embedding_model, knowledge_id, followup, max(top_k, 4)
+        )
+        if extra:
+            chunks = merge_chunks(chunks, extra, top_k)
+
+if not chunks:
+    return build_no_context_prompt(base_prompt), []      # 检不到→指示模型拒答
+return build_rag_system_prompt(base_prompt, chunks), serialize_sources(chunks)</pre>
+      <div class="code-notes"><ul>
+        <li><code>grade_retrieval</code>：一次 temperature=0 的小模型调用，输入「问题 + 检回的片段」，输出 JSON <code>{sufficient: bool, followup_query: str}</code>——判断资料够不够回答，不够则给出一个更好的检索词。</li>
+        <li><b>有界重试</b>是关键设计：最多补检一次，而不是循环到满意为止——延迟可控、成本可控。Agent 类系统的黄金法则：任何 LLM 驱动的循环都必须有硬上限。</li>
+        <li><code>merge_chunks</code> 的合并策略偏向第一轮结果（第一轮通常没那么差），二轮结果做补充——这是评测调出来的结论，不是拍脑袋（第 7 章有对照数据）。</li>
+        <li>最后注意<b>检索为空的分支</b>：不是不带资料硬答，而是换一个「明确告知知识库无此信息」的 prompt 让模型拒答——防幻觉的最后一道闸。</li>
+      </ul></div>
+
+      <h3>组装 prompt：防幻觉的规则工程</h3>
+      <pre data-lang="python" data-path="server/services/rag.py（真实代码）">
+RAG_INSTRUCTION = """你是一个企业知识库问答助手。请严格依据下面提供的【参考资料】回答用户问题。
+规则：
+1. 只能使用参考资料中的信息回答，不要使用资料以外的知识，也不要编造。
+2. 如果参考资料中找不到答案，必须直接回答"知识库中没有找到相关信息"，不要猜测。
+3. 引用具体内容时，用方括号标注来源序号，例如 [1]、[2]。
+4. 回答使用与用户提问相同的语言。"""</pre>
+      <div class="code-notes"><ul>
+        <li>规则 2 给模型「我不知道」的<b>出口</b>——没有出口它就只能编。规则 3 的 [1][2] 标注让前端能渲染可点击的引用来源，用户可溯源验证。这两条是 RAG 防幻觉 prompt 的标准配方。</li>
+      </ul></div>
+
+      <h3>全链路七站总览（面试背这个）</h3>
+      <ol>
+        <li><b>取问题</b>：<code>last_user_text</code> 从 messages 提取最后一个用户问题</li>
+        <li><b>改写</b>：多轮指代 → LLM 改写成自包含 query（可开关）</li>
+        <li><b>双路检索</b>：numpy 余弦 + SQLite FTS5 BM25，各出候选榜</li>
+        <li><b>RRF 融合</b>：按名次合并双榜，宽候选池（3×top_k）</li>
+        <li><b>rerank 精排</b>：交叉编码器重打分（可开关，失败降级）</li>
+        <li><b>Grader 自纠错</b>：小模型判定是否足够，不够补检一次再合并（可开关）</li>
+        <li><b>组装</b>：防幻觉指令 + 编号资料塞进 system prompt；空结果走拒答 prompt；sources 序列化先行发给前端</li>
+      </ol>
+
+      <div class="try-it">
+        <div class="tag">动手实验 · 用 debug 接口做一次 A/B</div>
+        <p>知识库上传几篇文档并建索引后（前端操作即可），用检索调试接口对比三种模式的命中差异：</p>
+        <pre data-lang="bash" data-path="WSL 终端">
+# 纯向量
+curl -s "http://localhost:8000/api/knowledge/{kb_id}/query?q=ERR-4032错误码&mode=vector" | python -m json.tool
+# 混合检索（观察 BM25 把精确术语捞回来了）
+curl -s "http://localhost:8000/api/knowledge/{kb_id}/query?q=ERR-4032错误码&mode=hybrid" | python -m json.tool
+# 混合 + rerank（观察顺序变化）
+curl -s "http://localhost:8000/api/knowledge/{kb_id}/query?q=ERR-4032错误码&mode=hybrid&rerank=true" | python -m json.tool</pre>
+        <p class="muted">用「编号/术语类问题」测，向量 vs 混合的差距最直观。这也是给面试官现场演示的最佳剧本。</p>
+      </div>
+
+      <div class="iv-zone">
+        <div class="zone-head"><span class="ic">面</span><h2>面试官视角 · 本章问答</h2><span class="cnt"></span></div>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q1</span>chunk size 你怎么定的？为什么带 overlap？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「600 字 / 100 重叠，两头权衡的结果：片太小上下文断裂，片太大向量语义稀释且占爆窗口。600 对中文技术文档大约是一两个段落，一个相对完整的知识单元。overlap 解决边界问题——答案句恰好跨在切点上时，重叠让它在相邻两片里各完整出现一次。另外我不做定长硬切，在窗口后半段找段落/句号等自然断点。理想状态是按文档结构（标题层级）切，这在我的 roadmap 里。」</p>
+            <p class="followup">追问预判：「这个值怎么验证是好的？」→ 答：跑评测集。chunk size 是超参，我有 40 题 Hit@K/MRR 评测集，改参数跑分对比，数据说话（第 7 章详述）。</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q2</span>为什么做混合检索？只用向量不行吗？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「向量检索的盲区是精确术语：错误码、配置项名、人名编号这类 token 在语义空间里没有区分度，问『ERR-4032』检回来的可能是『ERR-5011』的文档。BM25 恰好相反，字面命中是它的强项，但同义改述完全无能。企业知识库两类查询都高频，所以双路检索 + RRF 融合。我的评测数据：纯向量 Hit@4 82.5%，混合 92.5%，提升集中在术语类 query。实现上用 SQLite FTS5 + CJK bigram 分词，零新增服务依赖。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q3</span>RRF 为什么按名次融合，不把两个分数加权平均？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「量纲问题：余弦相似度落在 0~1 且分布集中，BM25 分数无上界、随文档长度和词频波动，直接加权等于比较米和斤，权重怎么调都是过拟合某批数据。名次是两路唯一可比的共同语言。RRF 公式 1/(60+rank)，60 这个常数压平了头部差距——第 1 名和第 2 名的得分差远小于线性，避免单路的头部霸榜。它是零参数、免调优的融合方法，论文和 Elasticsearch 都用它做默认。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q4</span>rerank 的原理？为什么不直接用 reranker 检索全库？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「embedding 是双塔：两段文本各自编码、从未交互，快但粗。交叉编码器把 query+chunk 拼接后整体过模型，token 级交叉注意力，判断精确得多，但每对都要现场推理——全库 1 万片就是 1 万次前向，根本不可行。所以两级流水线：双塔粗排从全库取 12 条候选（可预计算、毫秒级），交叉编码器只精排这 12 条。跟推荐系统的召回+精排、前端的列表接口+详情接口是同一个架构模式。」</p>
+            <p class="followup">追问预判：「rerank 挂了怎么办？」→ 答：返回 None 触发降级，直接用 RRF 粗排结果，链路不断——离线环境权重下载失败时系统照常工作，只是排序略粗。</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q5</span>什么是 Agentic RAG？你的自纠错具体怎么做的？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「标准 RAG 是开环：检索→生成，检错了也照用。Agentic RAG 加入模型参与的决策环。我的实现是『评估-补检』：第一轮检索后，用 temperature=0 的小模型当 Grader，输入问题和检回片段，输出 JSON——资料是否足以回答 + 不足时的改进检索词；不足则用新词补检一次、按『第一轮优先』策略合并。关键工程约束是<b>有界</b>：最多补检一次，不是循环到满意，延迟和成本都可控。评测显示它在困难查询集上把 Hit@4 拉高约 10 个点，代价是这类查询多一次小模型调用。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q6</span>RAG 的幻觉你怎么治理？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「分层设防：<b>检索层</b>——混合检索+rerank+自纠错把资料质量提上去，幻觉的根因多半是资料不对；<b>prompt 层</b>——明确规则『只依据参考资料、找不到就明说、引用标 [n]』，给模型『我不知道』的出口；<b>兜底层</b>——检索为空时切换专用拒答 prompt，而不是让模型裸答；<b>验证层</b>——LLM-as-judge 评 faithfulness（回答是否忠于资料），离线评测持续监控。引用标注还给了用户人工核验的入口，这是产品层的最后防线。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q7</span>多轮对话里 RAG 的 query 怎么处理？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「痛点是指代：第二轮的『那它呢』拿去检索必然失败。我的做法是 query rewrite：先用启发式判断是否跟进型问句（避免每轮都多一次 LLM 调用），是则让模型结合对话历史把问题改写成自包含形式再检索。我为此单独建了一个多轮评测集验证效果。另一个思路是拿最近几轮拼接去检索，但噪声大，改写的信噪比更好。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q8</span>你的向量存在 SQLite，规模大了怎么办？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「当前方案是 numpy 全量余弦，万级 chunk 毫秒级，单机知识库场景绰绰有余，且零外部依赖利于私有化交付。规模上去的演进路径想清楚了：十万级迁 <b>pgvector</b>（HNSW 近似最近邻索引，SQL 生态无缝），号称亿级再考虑专用向量库（Milvus/Qdrant）。架构上检索被封装在 query_knowledge 一个函数后面，换存储引擎上层无感。不为还不存在的规模提前引入运维复杂度——但知道路怎么走。」</p>
+          </div>
+        </details>
+      </div>
+
+      <div class="recap">
+        <div class="r-head">本章小结 · 装进口袋的 7 句话</div>
+        <div class="r-body"><ul>
+          <li>RAG = 先检索后生成，把「模型懂不懂」转化成「<b>检索准不准</b>」。</li>
+          <li>embedding 把语义变坐标，检索 = <code>ORDER BY cos() DESC LIMIT k</code>；本项目 numpy 矩阵一把算完。</li>
+          <li>切片 600/100 重叠 + 自然断点：小了断上下文，大了糊语义。</li>
+          <li>混合检索补术语盲区：向量管语义、BM25 管字面，<b>RRF 按名次融合</b>（分数量纲不可比）。</li>
+          <li>rerank = 交叉编码器精排：召回宽、精排严，两级流水线。</li>
+          <li>Agentic 自纠错 = Grader 评分 + <b>有界</b>补检 + 偏向首轮的合并。</li>
+          <li>防幻觉三件套：只依据资料、给「不知道」出口、引用编号可溯源。</li>
+        </ul></div>
+      </div>
+
+      <div class="ch-nav" data-auto></div>
+    </article>
+  </main>
+</div>
+<script src="assets/tutorial.js"></script>
+</body>
+</html>

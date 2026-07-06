@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>06 · MCP 协议与 Server 实现 · MyOpenWeb 修炼手册</title>
+<link rel="stylesheet" href="assets/tutorial.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <main class="content">
+    <article class="article">
+
+      <div class="ch-head">
+        <div class="ch-eyebrow"><span class="badge">CH 06</span><span class="part">第二部分 · 核心原理</span></div>
+        <h1>MCP 协议与 Server 实现<br>—— AI 工具层的 USB-C</h1>
+        <p class="lede">MCP（Model Context Protocol）是 2026 年 AI 应用岗面试的必考新题。好消息：你的项目里有一个<b>真实在跑的 MCP Server</b>（130 行），Cursor 能直接连上调你的企业知识库。这一章讲清协议本质、读完实现、并把「业务与协议解耦」的架构故事讲顺。</p>
+        <div class="ch-meta"><span>预计 3 小时</span><span>难度 ★★★☆☆</span><span>对应源码 server/mcp_server/main.py、server/eval/mcp_smoke.py</span></div>
+      </div>
+
+      <div class="goals">
+        <h2>学完本章你能</h2>
+        <ul>
+          <li>用 <b>M×N → M+N</b> 讲清 MCP 解决什么问题</li>
+          <li>说出协议栈三层：<b>JSON-RPC 2.0 / transport（stdio、HTTP）/ 能力原语（tools、resources、prompts）</b></li>
+          <li>解释 FastMCP 装饰器如何从<b>类型标注 + docstring</b> 自动生成工具 schema</li>
+          <li>讲清 MCP 与 function calling 的关系（不是竞品，是不同层）</li>
+        </ul>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 6.1</span>解决什么问题：M×N 的集成灾难</h2>
+      <p>2023–2024 年的乱象：每个 AI 客户端（Cursor、Claude Desktop、各家 Copilot）想接每个工具源（GitHub、数据库、内部知识库），都要写一套私有插件。M 个客户端 × N 个工具 = <b>M×N 套适配代码</b>，且互不通用。</p>
+      <p>Anthropic 在 2024 年 11 月开源 MCP，把中间那条线标准化：工具方实现一次 <b>MCP Server</b>，客户端实现一次 <b>MCP Client</b>，任意组合即插即用——集成成本从 M×N 降到 <b>M+N</b>。2025 年 OpenAI、Google 相继采纳，它成了事实标准。</p>
+      <div class="analogy">
+        <div class="tag">前端类比</div>
+        <p>USB-C 之前，每个手机厂一个充电口，线缆厂商要为每种口各出一根线；USB-C 把「口」标准化后，任何线配任何设备。再贴近你的经验一点：MCP 之于 AI 工具，就像 <b>LSP（Language Server Protocol）之于编辑器</b>——LSP 出现前每个编辑器为每种语言写一遍补全，之后语言方实现一个 Language Server 就通吃所有编辑器。MCP 抄的正是 LSP 的作业，连 JSON-RPC 底座都一样。</p>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 6.2</span>协议本质：三层拆解</h2>
+      <table class="cmp-table">
+        <tr><th>层</th><th>内容</th><th>你已有的对应知识</th></tr>
+        <tr><td class="y">消息层</td><td>JSON-RPC 2.0：请求带 <code>id/method/params</code>，响应带 <code>id/result</code></td><td>形状像 Redux action / 老式 XML-RPC 的 JSON 版</td></tr>
+        <tr><td class="y">传输层</td><td><b>stdio</b>（客户端把 Server 当子进程拉起，读写标准输入输出）或 <b>Streamable HTTP</b>（远程部署）</td><td>stdio ≈ 管道 <code>ps | grep</code>；HTTP 版 ≈ 普通 Web 服务</td></tr>
+        <tr><td class="y">能力层</td><td>三种原语：<b>tools</b>（模型可调用的函数）、<b>resources</b>（可读数据，类似 GET）、<b>prompts</b>（预置提示词模板）</td><td>tools ≈ POST 接口；resources ≈ 静态资源路由</td></tr>
+      </table>
+      <p>一次完整会话的报文流（以 Cursor 连本项目为例）：</p>
+      <pre data-lang="json" data-path="MCP 会话报文流（简化）">
+→ {"id": 0, "method": "initialize", "params": {"protocolVersion": "..."}}   // 握手
+← {"id": 0, "result": {"capabilities": {"tools": {}}, "serverInfo": {"name": "myopenweb"}}}
+
+→ {"id": 1, "method": "tools/list"}                                        // 问有什么工具
+← {"id": 1, "result": {"tools": [{"name": "search_knowledge",
+     "description": "在指定企业知识库中检索资料片段…",
+     "inputSchema": {"type": "object", "properties": {"knowledge": {...}, "query": {...}}}}, ...]}}
+
+→ {"id": 2, "method": "tools/call",                                        // 调用
+   "params": {"name": "search_knowledge",
+              "arguments": {"knowledge": "运维手册", "query": "Redis 默认端口"}}}
+← {"id": 2, "result": {"content": [{"type": "text", "text": "{\"results\": [...]}"}]}}</pre>
+      <div class="code-notes"><ul>
+        <li>就三个动词：<code>initialize</code> 握手、<code>tools/list</code> 拿说明书、<code>tools/call</code> 执行。第 5 章 function calling 的 <code>tools</code> 数组，内容正是从 <code>tools/list</code> 的返回喂给模型的。</li>
+        <li>stdio 传输下没有端口、没有 URL——客户端 spawn 子进程，JSON-RPC 报文一行一条走 stdin/stdout。这也是为什么调试 MCP Server 不能 print 到 stdout（会污染协议流），日志必须走 stderr。</li>
+      </ul></div>
+
+      <h2 class="sec-t"><span class="no">SECTION 6.3</span>读代码：130 行的完整 MCP Server</h2>
+      <p>SDK（FastMCP）把协议层全部吞掉，你写的只剩业务。看本项目把知识库检索暴露成 MCP 工具的全部代码：</p>
+      <pre data-lang="python" data-path="server/mcp_server/main.py（真实代码，节选）">
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("myopenweb")                # Server 名字，客户端握手时可见
+
+@mcp.tool()
+async def search_knowledge(knowledge: str, query: str, top_k: int = 4) -> dict[str, Any]:
+    """在指定企业知识库中检索资料片段（混合检索：BM25 + 向量 RRF 融合）。
+
+    Args:
+        knowledge: 知识库名称或 id（可先用 list_knowledge_bases 查看）
+        query: 检索问题或关键词
+        top_k: 返回片段数量，默认 4
+    """
+    knowledge_id = _resolve_knowledge_id(knowledge)
+    if not knowledge_id:
+        names = [item.name for item in list_knowledge()]
+        return {"error": f"知识库 '{knowledge}' 不存在", "available": names}
+
+    config = get_provider_config()
+    chunks = await query_knowledge(          # ← 完整复用第4章的检索链路
+        config, config.embedding_model, knowledge_id, query,
+        top_k=max(1, min(top_k, 10)),
+    )
+    ...
+
+@mcp.tool()
+def analyze_log(log: str) -> dict[str, Any]:
+    """分析应用/运维日志：统计级别分布、抽取错误行与异常类型、定位首尾错误。"""
+    return run_tool("analyze_log", {"log": log})    # ← 一行包装第5章的工具
+
+def main() -> None:
+    init_db()
+    mcp.run()                              # 默认 stdio transport，开始收发 JSON-RPC</pre>
+      <div class="code-notes"><ul>
+        <li><b>schema 是自动生成的</b>：函数的类型标注（<code>knowledge: str</code>、<code>top_k: int = 4</code>）变成 inputSchema 的字段类型和默认值；docstring 变成工具 description、Args 段变成参数 description。<b>代码即文档即协议</b>——第 1 章学的类型标注在这里兑现了第三种价值。</li>
+        <li><code>_resolve_knowledge_id</code> 的容错值得注意：调用方传名字或 id 都行，不存在时返回<b>可用列表</b>而不是干巴巴的报错——错误信息设计成「模型看了知道下一步怎么办」，与第 5 章工具的 hint 思想一脉相承。</li>
+        <li><code>top_k=max(1, min(top_k, 10))</code>：外部输入夹紧到安全范围，边界防御只出现在系统边界（协议入口），内部函数互相信任——这是全项目一致的防御哲学。</li>
+      </ul></div>
+
+      <h2 class="sec-t"><span class="no">SECTION 6.4</span>架构故事：业务与协议解耦</h2>
+      <p>注意 <code>analyze_log</code> 那个工具只有一行——因为业务逻辑在 <code>agent_tools.py</code> 里是<b>纯函数</b>，MCP 只是它的第二个「插座」。整个项目此刻有三个协议入口共用同一套业务核心：</p>
+      <table class="cmp-table">
+        <tr><th>入口</th><th>协议</th><th>消费者</th><th>适配层代码量</th></tr>
+        <tr><td>FastAPI routers</td><td>HTTP REST + SSE</td><td>自家 H5 / Android 壳</td><td>routers/ 薄壳</td></tr>
+        <tr><td>agent_runner</td><td>内部函数调用</td><td>自家 Agent 循环</td><td>run_tool 分发</td></tr>
+        <tr><td class="y">mcp_server</td><td>MCP (JSON-RPC/stdio)</td><td>Cursor / Claude Desktop / 任意 MCP 客户端</td><td class="y">130 行装饰器包装</td></tr>
+      </table>
+      <div class="keypoint">
+        <div class="tag">面试话术（原样可用）</div>
+        <p>「我加 MCP Server 只花了 130 行，因为检索和工具在设计时就是与协议无关的纯函数/服务——HTTP、Agent 内部调用、MCP 是三个平行的薄适配层。以后出现新协议，再加一层就是了。这验证了我分层设计的正确性。」——用一个具体数字（130 行）证明一个抽象原则（解耦），是最有说服力的讲法。</p>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 6.5</span>MCP 与 function calling：不是二选一</h2>
+      <p>高频混淆点，一张图分清：</p>
+      <pre data-lang="bash" data-path="两个协议在链路上的位置">
+  模型(LLM)  ←── function calling ──→  你的应用(Agent 编排)  ←── MCP ──→  工具服务
+   "我想调 search_knowledge"              把工具清单给模型；            标准化的工具发现
+    (决策，模型↔应用之间)                  把调用转发给工具方             与执行(应用↔工具之间)</pre>
+      <div class="code-notes"><ul>
+        <li><b>function calling</b> 解决「模型如何表达调用意图」——模型和应用之间的约定（第 5 章）。</li>
+        <li><b>MCP</b> 解决「应用如何发现和调用外部工具」——应用和工具服务之间的约定（本章）。</li>
+        <li>典型闭环：应用启动 → MCP <code>tools/list</code> 拿到工具清单 → 转成 <code>tools</code> 数组喂给模型 → 模型 function calling 说要调 → 应用翻译成 MCP <code>tools/call</code> 执行 → 结果回填。两个协议在同一条链路的不同段上接力。</li>
+      </ul></div>
+
+      <div class="try-it">
+        <div class="tag">动手实验 · 三种姿势玩你的 MCP Server</div>
+        <p>① 跑冒烟测试（项目自带，脚本内部走一遍 initialize → tools/list → tools/call）：</p>
+        <pre data-lang="bash" data-path="WSL 终端 · 项目根目录">
+./.venv/bin/python server/eval/mcp_smoke.py
+# 输出工具清单 + search_knowledge 的真实检索结果即通过</pre>
+        <p>② 接进 Cursor（Windows 侧 <code>~/.cursor/mcp.json</code>）后，在对话里直接说「用 myopenweb 检索一下运维手册里 Redis 的默认端口」：</p>
+        <pre data-lang="json" data-path="~/.cursor/mcp.json">
+{
+  "mcpServers": {
+    "myopenweb": {
+      "command": "wsl.exe",
+      "args": ["bash", "-lc",
+        "cd /mnt/d/ai_one/MyOpenWeb && ./.venv/bin/python -m server.mcp_server.main"]
+    }
+  }
+}</pre>
+        <p class="muted">③ 面试演示剧本：共享屏幕里让 Cursor 调用你的知识库并给出带来源的回答——「我的项目是一个别的 AI 也能调用的服务」，这句话的冲击力比任何描述都强。</p>
+      </div>
+
+      <div class="iv-zone">
+        <div class="zone-head"><span class="ic">面</span><h2>面试官视角 · 本章问答</h2><span class="cnt"></span></div>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q1</span>什么是 MCP？解决什么问题？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「Anthropic 2024 年底开源的开放协议，标准化 AI 应用与外部工具/数据源之间的连接。解决 M×N 集成灾难：以前每个 AI 客户端接每个工具源都要写私有适配，MCP 把接口标准化后降到 M+N——工具方实现一次 Server，所有支持 MCP 的客户端即插即用。技术上是 JSON-RPC 2.0 + stdio/HTTP 传输 + tools/resources/prompts 三种能力原语，思路直接借鉴了 LSP。我的项目实现了一个真实的 MCP Server，把企业知识库检索暴露出去，Cursor 可以直连调用。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q2</span>MCP 和 function calling 什么关系？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「不同层，互补不竞争。function calling 是<b>模型↔应用</b>之间的约定：模型怎么表达『我要调工具』；MCP 是<b>应用↔工具服务</b>之间的约定：应用怎么发现、调用外部工具。完整链路是接力：MCP tools/list 拿清单 → 转成 tools 参数喂模型 → 模型 function calling 表达意图 → 应用翻译成 MCP tools/call 执行。我的项目里两层都有真实实现，Agent 循环走 function calling，对外服务走 MCP。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q3</span>你的 MCP Server 怎么实现的？花了多少工作量？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「130 行。用官方 Python SDK 的 FastMCP：<code>@mcp.tool()</code> 装饰业务函数，SDK 从类型标注生成 inputSchema、从 docstring 生成 description，协议握手和 JSON-RPC 编解码全部托管。工作量小的根本原因是架构：检索链路和工具函数本来就是协议无关的纯函数，MCP 只是第三个薄适配层（前两个是 HTTP routers 和 Agent 内部调用）。这130行里我还是做了三件正经事：名称/ID 双向解析、错误信息带可用列表（让模型知道怎么纠正）、top_k 边界夹紧。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q4</span>stdio 和 HTTP 两种 transport 怎么选？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「stdio：客户端把 Server 当子进程拉起，报文走标准输入输出——零网络配置、天然单用户隔离、进程随客户端生灭，本地个人工具首选，我目前就用它（Cursor 通过 wsl.exe 拉起）。Streamable HTTP：Server 作为常驻网络服务，支持远程访问、多客户端共享、可以加认证和网关——团队共享部署用它。我的迁移路径清晰：FastMCP 两种 transport 都支持，业务代码零改动，改一个启动参数加一层鉴权就能变成团队服务。」</p>
+            <p class="followup">追问预判：「stdio 模式下怎么打日志？」→ 答：stdout 是协议通道，print 会污染 JSON-RPC 流导致解析失败；日志必须走 stderr 或文件。这是 MCP 开发第一坑，我踩过。</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q5</span>MCP 生产化有什么安全问题要考虑？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「四层：<b>认证授权</b>——HTTP transport 要加 OAuth/API-Key，工具级还要权限分级（检索只读 vs 写操作）；<b>输入校验</b>——SDK 只保证类型正确，业务约束（top_k 上限、路径白名单）要自己夹紧；<b>注入风险</b>——工具返回的内容会进入模型上下文，恶意文档里可能藏『忽略之前的指令』这类 prompt 注入，需要内容清洗或标记来源隔离；<b>供应链</b>——第三方 MCP Server 相当于给模型装了任意插件，企业环境要白名单管控可接入的 Server。我的当前实现定位内网单用户，前两层已做，后两层在 roadmap。」</p>
+          </div>
+        </details>
+      </div>
+
+      <div class="recap">
+        <div class="r-head">本章小结 · 装进口袋的 5 句话</div>
+        <div class="r-body"><ul>
+          <li>MCP 把 AI 工具集成从 <b>M×N 降到 M+N</b>，是 LSP 思路在 AI 时代的复刻。</li>
+          <li>协议栈 = JSON-RPC 2.0 + stdio/HTTP transport + tools/resources/prompts 原语；核心动词就三个：initialize、tools/list、tools/call。</li>
+          <li>FastMCP 装饰器：<b>类型标注 → inputSchema，docstring → description</b>，代码即协议。</li>
+          <li>function calling 管模型↔应用，MCP 管应用↔工具，同链路不同段的接力。</li>
+          <li>130 行接入新协议 = 业务纯函数 + 薄适配层的架构红利，这是可以现场演示的面试杀手锏。</li>
+        </ul></div>
+      </div>
+
+      <div class="ch-nav" data-auto></div>
+    </article>
+  </main>
+</div>
+<script src="assets/tutorial.js"></script>
+</body>
+</html>
