@@ -209,12 +209,14 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 │   └── ocr/          # 可选 PaddleOCR 独立服务依赖
 ├── src/              # React H5（apis / components / stores / bridge）
 ├── scripts/          # 一键启动脚本（后端 / OCR）
+├── doc/              # 《MyOpenWeb 修炼手册》：10 章 AI 应用开发教材（HTML，双击即读）
 └── docs/             # 架构文档、RAG+Agent 模块文档、Open WebUI 对照分析、排障手册
 ```
 
 ## 文档
 
 - [架构展示页](docs/architecture.html)：单文件可视化工程档案（能力矩阵 / 架构图 / 检索链路 / 评测图表），浏览器直接打开即可
+- [MyOpenWeb 修炼手册](doc/index.html)：基于本仓库真实代码的 10 章 AI 应用开发教材（Python 速成 → FastAPI → LLM → RAG → Agent → MCP → 评测/LLMOps → 工程化 → 精进路线 → 面试通关），浅色/深色双主题，浏览器打开 `doc/index.html` 即读
 - [项目架构](docs/project-architecture.md)：技术栈、数据流、数据库设计、Bridge 协议
 - [RAG + Agent 模块](docs/rag-agent-copilot.md)：能力总览、API 参考、使用步骤、设计取舍
 - [Open WebUI 对照分析](docs/open-webui-analysis.md)：参考项目的拆解与借鉴边界
