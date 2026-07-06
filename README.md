@@ -214,6 +214,7 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 
 ## 文档
 
+- [架构展示页](docs/architecture.html)：单文件可视化工程档案（能力矩阵 / 架构图 / 检索链路 / 评测图表），浏览器直接打开即可
 - [项目架构](docs/project-architecture.md)：技术栈、数据流、数据库设计、Bridge 协议
 - [RAG + Agent 模块](docs/rag-agent-copilot.md)：能力总览、API 参考、使用步骤、设计取舍
 - [Open WebUI 对照分析](docs/open-webui-analysis.md)：参考项目的拆解与借鉴边界
