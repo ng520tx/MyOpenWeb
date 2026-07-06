@@ -31,6 +31,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   retrievalMode: 'hybrid',
   rerankEnabled: false,
   rerankModel: DEFAULT_RERANK_MODEL,
+  queryRewriteEnabled: true,
   agentEnabled: false,
   model: DEFAULT_MODEL,
   systemPrompt: DEFAULT_SYSTEM_PROMPT,

@@ -28,6 +28,7 @@ def get_provider_config() -> ProviderConfig:
         retrieval_mode=retrieval_mode,
         rerank_enabled=(values.get("rerank_enabled") or "0") == "1",
         rerank_model=values.get("rerank_model") or "BAAI/bge-reranker-base",
+        query_rewrite_enabled=(values.get("query_rewrite_enabled") or "1") == "1",
     )
 
 
@@ -46,6 +47,7 @@ def update_provider_config(config: ProviderConfig) -> ProviderConfig:
         "retrieval_mode": retrieval_mode,
         "rerank_enabled": "1" if config.rerank_enabled else "0",
         "rerank_model": (config.rerank_model or "BAAI/bge-reranker-base").strip(),
+        "query_rewrite_enabled": "1" if config.query_rewrite_enabled else "0",
     }
 
     with get_db() as conn:
@@ -65,4 +67,5 @@ def update_provider_config(config: ProviderConfig) -> ProviderConfig:
         retrieval_mode=retrieval_mode,
         rerank_enabled=config.rerank_enabled,
         rerank_model=stored["rerank_model"],
+        query_rewrite_enabled=config.query_rewrite_enabled,
     )

@@ -26,6 +26,10 @@ class ProviderConfig(BaseModel):
     # imported; when unavailable retrieval silently falls back to fused order.
     rerank_enabled: bool = False
     rerank_model: str = "BAAI/bge-reranker-base"
+    # Rewrite the latest user turn into a self-contained retrieval query using
+    # recent chat history (resolves pronouns like "它的端口"). Falls back to the
+    # raw query on any failure; single-turn chats skip the extra LLM call.
+    query_rewrite_enabled: bool = True
 
 
 class ProviderVerifyResult(BaseModel):

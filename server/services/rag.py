@@ -13,6 +13,7 @@ from server.repositories.knowledge import (
 )
 from server.schemas.config import ProviderConfig
 from server.services.embeddings import embed_query, embed_texts
+from server.services.query_rewrite import needs_rewrite, rewrite_query
 from server.services.rerank import rerank_chunks
 from server.services.tokenize import build_match_query, tokenize_for_bm25
 
@@ -270,6 +271,8 @@ async def retrieve_for_chat(
         return base_prompt, []
 
     query = last_user_text(payload.get("messages", []))
+    if config.query_rewrite_enabled and needs_rewrite(payload.get("messages", [])):
+        query = await rewrite_query(config, payload, query)
     top_k = int(payload.get("rag_top_k") or 4)
     chunks = await query_knowledge(config, config.embedding_model, knowledge_id, query, top_k)
     if not chunks:

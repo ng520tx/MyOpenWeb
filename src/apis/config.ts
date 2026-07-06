@@ -12,6 +12,7 @@ interface ProviderConfigPayload {
   retrieval_mode: ProviderConfig['retrievalMode'];
   rerank_enabled: boolean;
   rerank_model: string;
+  query_rewrite_enabled: boolean;
 }
 
 type ProviderSettings = Pick<
@@ -26,6 +27,7 @@ type ProviderSettings = Pick<
   | 'retrievalMode'
   | 'rerankEnabled'
   | 'rerankModel'
+  | 'queryRewriteEnabled'
 >;
 
 export interface ProviderVerifyResult {
@@ -56,6 +58,7 @@ function toProviderPayload(settings: ProviderSettings): ProviderConfigPayload {
     retrieval_mode: settings.retrievalMode,
     rerank_enabled: settings.rerankEnabled,
     rerank_model: (settings.rerankModel || 'BAAI/bge-reranker-base').trim(),
+    query_rewrite_enabled: settings.queryRewriteEnabled,
   };
 }
 
@@ -71,6 +74,7 @@ function fromProviderPayload(payload: ProviderConfigPayload): ProviderConfig {
     retrievalMode: payload.retrieval_mode === 'vector' ? 'vector' : 'hybrid',
     rerankEnabled: Boolean(payload.rerank_enabled),
     rerankModel: payload.rerank_model || 'BAAI/bge-reranker-base',
+    queryRewriteEnabled: payload.query_rewrite_enabled !== false,
   };
 }
 

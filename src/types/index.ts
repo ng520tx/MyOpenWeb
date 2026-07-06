@@ -112,6 +112,7 @@ export interface AppSettings {
   retrievalMode: RetrievalMode;
   rerankEnabled: boolean;
   rerankModel: string;
+  queryRewriteEnabled: boolean;
   agentEnabled: boolean;
   model: string;
   systemPrompt: string;
@@ -134,6 +135,7 @@ export interface ProviderConfig {
   retrievalMode: RetrievalMode;
   rerankEnabled: boolean;
   rerankModel: string;
+  queryRewriteEnabled: boolean;
 }
 
 export interface FileRecord {

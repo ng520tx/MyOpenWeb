@@ -1,0 +1,8 @@
+{"history": [{"role": "user", "content": "Redis 内存占用过高怎么排查？"}, {"role": "assistant", "content": "先执行 redis-cli info memory 确认 used_memory，再用 redis-cli --bigkeys 定位大 key，注意历史上资源快照缓存（rc:snapshot: 前缀）曾因未设 TTL 导致内存泄漏。"}], "query": "它的主节点端口是多少？", "expect": ["6379"]}
+{"history": [{"role": "user", "content": "resource-api 是个什么服务？"}, {"role": "assistant", "content": "resource-api 是资源中心应用层的 Spring Boot 服务，监听 8080 端口，部署 2 个实例。"}], "query": "它的应用日志放在哪个目录？", "expect": ["/data/logs/resource-api"]}
+{"history": [{"role": "user", "content": "资源列表接口怎么分页查询？"}, {"role": "assistant", "content": "使用 GET /api/v2/resources，分页参数统一为 pageNo（从 1 开始）与 pageSize。"}], "query": "单页最多能查多少条？", "expect": ["上限 200", "截断为 200"]}
+{"history": [{"role": "user", "content": "调用资源中心开放接口需要怎么认证？"}, {"role": "assistant", "content": "在请求头携带 X-RC-Token 令牌即可，令牌在开放平台申请。"}], "query": "它的有效期是多久？", "expect": ["90 天"]}
+{"history": [{"role": "user", "content": "消息队列积压超过一万条了怎么处理？"}, {"role": "assistant", "content": "先登录 RabbitMQ 管理台确认消费者是否在线，resource-job 是 rc.resource.sync 队列的唯一消费者，可临时把消费者并发从 4 调到 8。"}], "query": "管理台是哪个端口？", "expect": ["15672"]}
+{"history": [{"role": "user", "content": "MySQL 全量备份是什么时候执行的？"}, {"role": "assistant", "content": "每天凌晨 2 点执行全量备份，备份目录为 /data/backup/mysql。"}], "query": "能保留多久？", "expect": ["保留 7 天"]}
+{"history": [{"role": "user", "content": "居家办公怎么连接公司内网？"}, {"role": "assistant", "content": "使用 EasyConnect 客户端连 VPN，首次登录需要绑定手机令牌。"}], "query": "它的地址是什么？", "expect": ["vpn.example.com"]}
+{"history": [{"role": "user", "content": "SSL 证书快过期了应该怎么处理？"}, {"role": "assistant", "content": "先用 openssl x509 -enddate 查看到期时间，替换证书后执行 nginx -s reload 即可，无需重启应用。"}], "query": "它是由谁统一签发的？", "expect": ["安全组"]}

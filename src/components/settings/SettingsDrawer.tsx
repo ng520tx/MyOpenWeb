@@ -374,6 +374,15 @@ export default function SettingsDrawer() {
           )}
 
           <Toggle
+            label="多轮检索改写（Query Rewrite）"
+            checked={settings.queryRewriteEnabled}
+            onChange={(v) => updateSettings({ queryRewriteEnabled: v })}
+          />
+          <span className="text-xs text-neutral-500 -mt-2 block leading-relaxed">
+            多轮追问时用模型把&quot;它的端口是多少&quot;这类省略主语的问题补全后再检索，失败自动回退原问题。
+          </span>
+
+          <Toggle
             label="OCR 文档解析（扫描件 / 表格 / 图片）"
             checked={settings.ocrEnabled}
             onChange={(v) => updateSettings({ ocrEnabled: v })}

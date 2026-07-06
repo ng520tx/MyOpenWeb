@@ -141,6 +141,15 @@ docker compose exec ollama ollama pull bge-m3
 MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 ```
 
+**多轮对话检索改写**（8 条指代型追问，如"它的端口是多少"，报告见 [server/eval/results-multiturn.md](server/eval/results-multiturn.md)）：
+
+| 指标 | 原始追问直接检索 | LLM 改写后检索 |
+|---|---|---|
+| Hit@1 | 0.62 | 0.88 |
+| MRR | 0.792 | 0.938 |
+
+多轮追问经常丢失主语（"它的端口"），检索前用对话历史把问题改写为自包含查询（qwen2.5:3b，改写失败自动回退原文），首位命中提升 26pp。复现：`python -m server.eval.run_multiturn_eval`。
+
 ## 核心设计与取舍
 
 - **为什么自研 RAG / Agent 而不用 LangChain、Dify**：目标是把检索与工具调用的每一步（切片策略、相似度计算、拒答规则、工具循环上限、运行日志）做成可解释、可调试的白盒；规模上来后再按接口替换为框架或向量库，`repositories` 层已预留切换点。
@@ -181,6 +190,7 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 - [x] Docker 一键部署（FastAPI 托管 H5 单容器）
 - [x] 后端单元测试 + GitHub Actions CI
 - [x] Agent 中间过程流式推送（思考 / 工具调用 / 工具结果实时时间线）
+- [x] 多轮对话检索改写（query rewrite，Hit@1 +26pp）
 - [ ] PostgreSQL + pgvector 可切换向量后端
 
 ## License
