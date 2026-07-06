@@ -36,6 +36,9 @@ class ProviderConfig(BaseModel):
     # one bounded follow-up retrieval targets the missing information. Grader
     # failures fall back to first-pass results.
     agentic_retrieval_enabled: bool = False
+    # Expose the web_search tool to the agent (ddgs / DuckDuckGo, no API key).
+    # Search failures degrade to a structured error the model can relay.
+    web_search_enabled: bool = False
     # Agent tool-calling protocol: "prompt" instructs the model to emit a JSON
     # decision (works with any model), "native" uses the provider's function
     # calling API (requires model-side tools support, e.g. qwen2.5).

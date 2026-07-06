@@ -437,7 +437,7 @@ export default function SettingsDrawer() {
           {settings.agentEnabled && (
             <>
               <div className="rounded-xl border border-blue-800/60 bg-blue-950/30 px-3 py-2 text-xs text-blue-200 leading-relaxed">
-                Agent 工具：当前时间、计算器、日志分析、Git diff 摘要、工单总结、测试用例生成、知识库检索。后端白名单执行，不会运行系统命令。
+                Agent 工具：当前时间、计算器、日志分析、Git diff 摘要、工单总结、测试用例生成、知识库检索、联网搜索（需开启）。后端白名单执行，不会运行系统命令。
               </div>
               <Field label="工具调用协议">
                 <select
@@ -452,6 +452,14 @@ export default function SettingsDrawer() {
                   Prompt 协议靠系统提示词约定 JSON 输出，任何模型可用；原生协议走模型 tools 接口（如 qwen2.5），格式更稳但依赖模型支持。
                 </span>
               </Field>
+              <Toggle
+                label="联网搜索工具（web_search）"
+                checked={settings.webSearchEnabled}
+                onChange={(v) => updateSettings({ webSearchEnabled: v })}
+              />
+              <span className="text-xs text-neutral-500 -mt-2 block leading-relaxed">
+                给 Agent 增加联网搜索（DuckDuckGo，免 key），知识库没有的时效性信息由模型自主决定联网查询，回答附来源链接。搜索失败自动降级，不影响其他工具。
+              </span>
             </>
           )}
 

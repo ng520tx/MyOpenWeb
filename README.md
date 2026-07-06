@@ -10,7 +10,7 @@
 
 - **知识库问答（RAG）**：建库 → 上传文件 → 切片向量化 → 混合检索（向量余弦 + BM25 经 RRF 融合）→ 可选 bge-reranker 重排 → 带 `[序号]` 引用来源回答；库外问题明确拒答，不编造
 - **文档解析**：txt / md / pdf / docx 文本抽取；扫描件、复杂表格可选接入 PaddleOCR PP-StructureV3 输出版面感知 Markdown，服务不可达时优雅降级
-- **研发/运维 Agent 工具**：日志分析（级别统计/异常归因/排查建议）、Git diff 变更摘要与风险点、工单结构化总结、测试用例生成
+- **研发/运维 Agent 工具**：日志分析（级别统计/异常归因/排查建议）、Git diff 变更摘要与风险点、工单结构化总结、测试用例生成、联网搜索（可选，DuckDuckGo 免 key，失败优雅降级）
 - **RAG × Agent 融合**：Agent 自主决定调用 `search_knowledge` 检索知识库，全过程写入运行日志（`agent_runs` / `agent_steps`），前端可展开查看每一步
 - **MCP Server**：知识库检索与研发/运维工具经官方 `mcp` SDK 暴露为标准 MCP 服务（stdio），Cursor / Claude Desktop 配置后可在 IDE 里直接查企业知识库
 - **多模型接入**：Ollama（原生 `/api/chat`，NDJSON 自动转 OpenAI SSE）与任意 OpenAI Compatible 接口，前端只维护一种流解析
@@ -230,6 +230,7 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 - [x] 多轮对话检索改写（query rewrite，Hit@1 +26pp）
 - [x] MCP Server（知识库 + 工具暴露为标准 MCP 服务，Cursor 可直连）
 - [x] 检索自纠错（Grader 评估 + 有界重检索，开/关对照评测）
+- [x] Agent 联网搜索工具（ddgs 免 key，可选开关 + 优雅降级）
 - [ ] PostgreSQL + pgvector 可切换向量后端
 
 ## License

@@ -9,7 +9,7 @@
 
 1. 文件落盘 + 文本抽取：上传 txt/md/pdf/docx/图片，后端抽取纯文本并落盘（PDF/扫描件/图片可选走 PaddleOCR），独立 `files` 表。
 2. RAG 知识库：建库 → 挂文件 → 切片向量化 → 多轮检索改写（query rewrite）→ 混合检索（向量余弦 + BM25 经 RRF 融合，可选 bge-reranker 重排）→ 可选检索自纠错（Grader 评估 + 有界重检索）→ 带引用回答 → 库外问题拒答。
-3. 研发/运维 Agent 工具：日志分析、Git diff 摘要、工单总结、测试用例生成，并能让 Agent 自己决定调用 `search_knowledge` 查知识库；思考/工具调用/工具结果全过程经 SSE 实时推送，前端渲染步骤时间线。
+3. 研发/运维 Agent 工具：日志分析、Git diff 摘要、工单总结、测试用例生成，并能让 Agent 自己决定调用 `search_knowledge` 查知识库、`web_search` 联网搜索（可选开关，DuckDuckGo 免 key）；思考/工具调用/工具结果全过程经 SSE 实时推送，前端渲染步骤时间线。
 4. 检索质量评测：自建 40 条 QA 评测集 + 8 条多轮指代追问集，Hit@K / MRR / 延迟跨参数对照（见第 7 节）。
 5. 框架认知对照：`examples/langgraph-agent/` 用 LangGraph 复刻同等 Agent 能力，沉淀"手写循环 vs 框架"的对比结论（见第 10 节）。
 6. MCP Server：知识库检索与研发/运维工具经官方 `mcp` SDK 暴露为标准 MCP 服务，Cursor 等客户端可直接在 IDE 里查企业知识库（见第 11 节）。
@@ -70,6 +70,7 @@ flowchart TD
 - 混合检索用 RRF：向量排名与 BM25 排名按 `1/(60+rank)` 融合，天然免调权重、对分数尺度不敏感；候选池取 `max(top_k*3, 10)` 给融合与重排留空间。
 - rerank 可降级：cross-encoder（bge-reranker）依赖单独放 `server/rerank/requirements.txt`，未安装或模型加载失败时负缓存 + 自动回退融合排序，核心链路不因 rerank 阻塞。
 - 检索自纠错有界且防误伤（`services/retrieval_grader.py`）：Grader 用宽松判定（有关键信息就算够）防误触发；followup 必须换表述、复读原查询直接放弃（重检索同一查询只会得到同样结果）；重检索硬上限 1 次防延迟螺旋；合并时首轮结果全保留（Grader 可能误判），二轮补进略放大的预算；Grader 任何失败都沿用首轮——与 rerank / query rewrite 同款降级哲学。
+- 联网搜索只进 Agent 不进 RAG（`services/web_search.py`）：知识库问答保持"未命中即拒答"的确定性（企业场景防幻觉优先）；联网是 Agent 工具，由模型按需选用（时效信息/库外问题），回答附来源链接。provider 函数分发（默认 ddgs 免 key，预留 bocha/serper），任何失败返回结构化 error 给模型转述，永不中断循环。
 - 两种工具协议可切换（设置 → Agent）：`prompt` 用系统提示词约定 JSON 输出，任何能写 JSON 的模型都能跑（含不支持 tools 的小模型），脏输出有归一化容错；`native` 走模型原生 function calling（tools 参数 + tool_calls 响应 + role=tool 回填），格式更稳、省去协议说明的 token，但依赖模型端支持（qwen2.5 实测可用）。
 - 不用 Dify：RAG 与 Agent 都自研，面试更好讲底层；Dify 仅作为后期可选编排 provider 的扩展点。
 - 普通聊天 vs Agent 两条 RAG 路径：

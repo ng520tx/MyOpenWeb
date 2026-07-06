@@ -33,6 +33,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   rerankModel: DEFAULT_RERANK_MODEL,
   queryRewriteEnabled: true,
   agenticRetrievalEnabled: false,
+  webSearchEnabled: false,
   agentEnabled: false,
   agentToolProtocol: 'prompt',
   model: DEFAULT_MODEL,

@@ -115,6 +115,7 @@ export interface AppSettings {
   rerankModel: string;
   queryRewriteEnabled: boolean;
   agenticRetrievalEnabled: boolean;
+  webSearchEnabled: boolean;
   agentEnabled: boolean;
   agentToolProtocol: AgentToolProtocol;
   model: string;
@@ -140,6 +141,7 @@ export interface ProviderConfig {
   rerankModel: string;
   queryRewriteEnabled: boolean;
   agenticRetrievalEnabled: boolean;
+  webSearchEnabled: boolean;
   agentToolProtocol: AgentToolProtocol;
 }
 

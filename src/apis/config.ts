@@ -14,6 +14,7 @@ interface ProviderConfigPayload {
   rerank_model: string;
   query_rewrite_enabled: boolean;
   agentic_retrieval_enabled: boolean;
+  web_search_enabled: boolean;
   agent_tool_protocol: ProviderConfig['agentToolProtocol'];
 }
 
@@ -31,6 +32,7 @@ type ProviderSettings = Pick<
   | 'rerankModel'
   | 'queryRewriteEnabled'
   | 'agenticRetrievalEnabled'
+  | 'webSearchEnabled'
   | 'agentToolProtocol'
 >;
 
@@ -64,6 +66,7 @@ function toProviderPayload(settings: ProviderSettings): ProviderConfigPayload {
     rerank_model: (settings.rerankModel || 'BAAI/bge-reranker-base').trim(),
     query_rewrite_enabled: settings.queryRewriteEnabled,
     agentic_retrieval_enabled: settings.agenticRetrievalEnabled,
+    web_search_enabled: settings.webSearchEnabled,
     agent_tool_protocol: settings.agentToolProtocol,
   };
 }
@@ -82,6 +85,7 @@ function fromProviderPayload(payload: ProviderConfigPayload): ProviderConfig {
     rerankModel: payload.rerank_model || 'BAAI/bge-reranker-base',
     queryRewriteEnabled: payload.query_rewrite_enabled !== false,
     agenticRetrievalEnabled: Boolean(payload.agentic_retrieval_enabled),
+    webSearchEnabled: Boolean(payload.web_search_enabled),
     agentToolProtocol: payload.agent_tool_protocol === 'native' ? 'native' : 'prompt',
   };
 }

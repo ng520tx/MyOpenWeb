@@ -33,6 +33,7 @@ def get_provider_config() -> ProviderConfig:
         rerank_model=values.get("rerank_model") or "BAAI/bge-reranker-base",
         query_rewrite_enabled=(values.get("query_rewrite_enabled") or "1") == "1",
         agentic_retrieval_enabled=(values.get("agentic_retrieval_enabled") or "0") == "1",
+        web_search_enabled=(values.get("web_search_enabled") or "0") == "1",
         agent_tool_protocol=agent_tool_protocol,
     )
 
@@ -55,6 +56,7 @@ def update_provider_config(config: ProviderConfig) -> ProviderConfig:
         "rerank_model": (config.rerank_model or "BAAI/bge-reranker-base").strip(),
         "query_rewrite_enabled": "1" if config.query_rewrite_enabled else "0",
         "agentic_retrieval_enabled": "1" if config.agentic_retrieval_enabled else "0",
+        "web_search_enabled": "1" if config.web_search_enabled else "0",
         "agent_tool_protocol": agent_tool_protocol,
     }
 
@@ -77,5 +79,6 @@ def update_provider_config(config: ProviderConfig) -> ProviderConfig:
         rerank_model=stored["rerank_model"],
         query_rewrite_enabled=config.query_rewrite_enabled,
         agentic_retrieval_enabled=config.agentic_retrieval_enabled,
+        web_search_enabled=config.web_search_enabled,
         agent_tool_protocol=agent_tool_protocol,
     )

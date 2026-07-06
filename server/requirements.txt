@@ -7,3 +7,5 @@ python-docx>=1.1,<2
 numpy>=1.26,<3
 # MCP server: exposes knowledge search + dev/ops tools to MCP clients (Cursor 等)
 mcp>=1.0,<2
+# Agent web_search tool provider (DuckDuckGo, no API key required)
+ddgs>=9,<10

@@ -22,6 +22,7 @@ from server.services.providers import (
     create_chat_completion_text,
 )
 from server.services.rag import query_knowledge, serialize_sources
+from server.services.web_search import WEB_SEARCH_TOOL_NAME, search_web, web_search_tool
 
 
 AGENT_INSTRUCTION = """你是 MyOpenWeb 的 Agent v1。
@@ -56,7 +57,7 @@ KNOWLEDGE_REFUSAL_GUIDANCE = """本次对话已选定企业知识库，你的回
 - 命中资料时，依据资料作答，并在引用具体内容时用 [序号] 标注来源。"""
 
 
-TOOL_NAMES = {tool["name"] for tool in list_tools()} | {KNOWLEDGE_TOOL_NAME}
+TOOL_NAMES = {tool["name"] for tool in list_tools()} | {KNOWLEDGE_TOOL_NAME, WEB_SEARCH_TOOL_NAME}
 
 
 async def create_agent_completion(config: ProviderConfig, payload: dict):
@@ -116,6 +117,8 @@ async def run_agent_events(
     available_tools = list_tools()
     if knowledge_id:
         available_tools = [*available_tools, knowledge_search_tool()]
+    if config.web_search_enabled:
+        available_tools = [*available_tools, web_search_tool()]
 
     # "native" rides the provider's function calling API (tool specs travel in
     # the request); "prompt" spells the JSON protocol out in the system prompt
@@ -219,6 +222,11 @@ async def run_agent_events(
                 if tool_name == KNOWLEDGE_TOOL_NAME:
                     output = await _run_knowledge_search(
                         config, knowledge_id, tool_input, user_input, collected_chunks
+                    )
+                elif tool_name == WEB_SEARCH_TOOL_NAME:
+                    output = await search_web(
+                        str(tool_input.get("query", "")),
+                        int(tool_input.get("max_results") or 5),
                     )
                 else:
                     output = run_tool(tool_name, tool_input)
