@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 ProviderType = Literal["ollama", "openai"]
 OcrMode = Literal["auto", "always"]
 RetrievalMode = Literal["vector", "hybrid"]
+AgentToolProtocol = Literal["prompt", "native"]
 
 
 class ProviderConfig(BaseModel):
@@ -30,6 +31,10 @@ class ProviderConfig(BaseModel):
     # recent chat history (resolves pronouns like "它的端口"). Falls back to the
     # raw query on any failure; single-turn chats skip the extra LLM call.
     query_rewrite_enabled: bool = True
+    # Agent tool-calling protocol: "prompt" instructs the model to emit a JSON
+    # decision (works with any model), "native" uses the provider's function
+    # calling API (requires model-side tools support, e.g. qwen2.5).
+    agent_tool_protocol: AgentToolProtocol = "prompt"
 
 
 class ProviderVerifyResult(BaseModel):

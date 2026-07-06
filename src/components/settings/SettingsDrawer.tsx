@@ -3,7 +3,7 @@ import { useAppStore } from '@/stores';
 import { fetchModels, type ModelInfo } from '@/apis/models';
 import { syncProviderConfig, verifyProviderConfig, type ProviderVerifyResult } from '@/apis/config';
 import { createMemory, deleteMemory, fetchMemories, updateMemory } from '@/apis/memories';
-import type { MemoryCategory, MemoryItem } from '@/types';
+import type { AppSettings, MemoryCategory, MemoryItem } from '@/types';
 
 export default function SettingsDrawer() {
   const { settings, settingsOpen, setSettingsOpen, updateSettings } = useAppStore();
@@ -426,9 +426,24 @@ export default function SettingsDrawer() {
           />
 
           {settings.agentEnabled && (
-            <div className="rounded-xl border border-blue-800/60 bg-blue-950/30 px-3 py-2 text-xs text-blue-200 leading-relaxed">
-              Agent 工具：当前时间、计算器、日志分析、Git diff 摘要、工单总结、测试用例生成、知识库检索。后端白名单执行，不会运行系统命令。
-            </div>
+            <>
+              <div className="rounded-xl border border-blue-800/60 bg-blue-950/30 px-3 py-2 text-xs text-blue-200 leading-relaxed">
+                Agent 工具：当前时间、计算器、日志分析、Git diff 摘要、工单总结、测试用例生成、知识库检索。后端白名单执行，不会运行系统命令。
+              </div>
+              <Field label="工具调用协议">
+                <select
+                  value={settings.agentToolProtocol}
+                  onChange={(e) => updateSettings({ agentToolProtocol: e.target.value as AppSettings['agentToolProtocol'] })}
+                  className="input-field"
+                >
+                  <option value="prompt">Prompt JSON（兼容任意模型）</option>
+                  <option value="native">原生 Function Calling（需模型支持 tools）</option>
+                </select>
+                <span className="text-xs text-neutral-500 mt-1 block leading-relaxed">
+                  Prompt 协议靠系统提示词约定 JSON 输出，任何模型可用；原生协议走模型 tools 接口（如 qwen2.5），格式更稳但依赖模型支持。
+                </span>
+              </Field>
+            </>
           )}
 
           <div className="border-t border-neutral-700 pt-4">

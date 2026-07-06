@@ -17,7 +17,10 @@ from server.services.agent_tools import (
     list_tools,
     run_tool,
 )
-from server.services.providers import create_chat_completion_text
+from server.services.providers import (
+    create_chat_completion_message,
+    create_chat_completion_text,
+)
 from server.services.rag import query_knowledge, serialize_sources
 
 
@@ -114,29 +117,50 @@ async def run_agent_events(
     if knowledge_id:
         available_tools = [*available_tools, knowledge_search_tool()]
 
-    agent_system_prompt = AGENT_INSTRUCTION.format(
-        tools=json.dumps(available_tools, ensure_ascii=False, indent=2)
-    )
+    # "native" rides the provider's function calling API (tool specs travel in
+    # the request); "prompt" spells the JSON protocol out in the system prompt
+    # and works with any model that can emit JSON.
+    use_native = config.agent_tool_protocol == "native"
     knowledge_guidance = KNOWLEDGE_REFUSAL_GUIDANCE if knowledge_id else ""
-    system_prompt = "\n\n".join(
-        part
-        for part in [base_system_prompt, memory_context, agent_system_prompt, knowledge_guidance]
-        if part
-    )
+    if use_native:
+        prompt_parts = [base_system_prompt, memory_context, knowledge_guidance]
+        native_tools = _to_openai_tools(available_tools)
+    else:
+        agent_system_prompt = AGENT_INSTRUCTION.format(
+            tools=json.dumps(available_tools, ensure_ascii=False, indent=2)
+        )
+        prompt_parts = [base_system_prompt, memory_context, agent_system_prompt, knowledge_guidance]
+        native_tools = None
+    system_prompt = "\n\n".join(part for part in prompt_parts if part)
     collected_chunks: list[dict[str, Any]] = []
 
     for round_index in range(3):
         yield ("event", {"type": "thinking", "round": round_index + 1})
-        raw = await create_chat_completion_text(
-            config,
-            {
-                **payload,
-                "messages": messages,
-                "system_prompt": system_prompt,
-                "stream": False,
-            },
-        )
-        decision = _normalize_agent_decision(_parse_agent_json(raw))
+        assistant_message: dict[str, Any] | None = None
+        if use_native:
+            assistant_message = await create_chat_completion_message(
+                config,
+                {
+                    **payload,
+                    "messages": messages,
+                    "system_prompt": system_prompt,
+                    "stream": False,
+                    "tools": native_tools,
+                },
+            )
+            raw = json.dumps(assistant_message, ensure_ascii=False)
+            decision = _decision_from_native(assistant_message)
+        else:
+            raw = await create_chat_completion_text(
+                config,
+                {
+                    **payload,
+                    "messages": messages,
+                    "system_prompt": system_prompt,
+                    "stream": False,
+                },
+            )
+            decision = _normalize_agent_decision(_parse_agent_json(raw))
         add_agent_step(
             run_id=run_id,
             step_index=step_index,
@@ -229,15 +253,36 @@ async def run_agent_events(
                 },
             )
 
-        messages.append({"role": "assistant", "content": raw})
-        messages.append({
-            "role": "user",
-            "content": (
-                "工具执行结果如下：\n"
-                f"{json.dumps(tool_results, ensure_ascii=False)}\n"
-                "请基于工具结果继续。仍然只能输出一个 JSON 对象。"
-            ),
-        })
+        if use_native and assistant_message is not None:
+            # Standard function-calling feedback: assistant message with its
+            # tool_calls, then one role=tool message per executed call.
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": assistant_message.get("content") or "",
+                    "tool_calls": assistant_message.get("tool_calls") or [],
+                }
+            )
+            raw_calls = assistant_message.get("tool_calls") or []
+            for index, tool_result in enumerate(tool_results):
+                tool_message: dict[str, Any] = {
+                    "role": "tool",
+                    "content": json.dumps(tool_result["result"], ensure_ascii=False),
+                }
+                call_id = (raw_calls[index] or {}).get("id") if index < len(raw_calls) else None
+                if call_id:
+                    tool_message["tool_call_id"] = call_id
+                messages.append(tool_message)
+        else:
+            messages.append({"role": "assistant", "content": raw})
+            messages.append({
+                "role": "user",
+                "content": (
+                    "工具执行结果如下：\n"
+                    f"{json.dumps(tool_results, ensure_ascii=False)}\n"
+                    "请基于工具结果继续。仍然只能输出一个 JSON 对象。"
+                ),
+            })
 
     final_answer = "Agent 工具调用超过最大步数，已停止。请把问题拆小一点再试。"
     add_agent_step(
@@ -417,6 +462,47 @@ def _normalize_tool_call(tool_call: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(parameters, dict):
         parameters = {}
     return {"name": name, "parameters": parameters}
+
+
+def _to_openai_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert internal tool specs to the OpenAI function-calling schema."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": tool["name"],
+                "description": tool.get("description", ""),
+                "parameters": tool.get("input_schema") or {"type": "object", "properties": {}},
+            },
+        }
+        for tool in tools
+    ]
+
+
+def _decision_from_native(message: dict[str, Any]) -> dict[str, Any]:
+    """Map a native function-calling response onto the unified decision shape.
+    Ollama returns arguments as a dict; OpenAI as a JSON string — accept both."""
+    calls = message.get("tool_calls") or []
+    normalized: list[dict[str, Any]] = []
+    for call in calls:
+        if not isinstance(call, dict):
+            continue
+        function = call.get("function") if isinstance(call.get("function"), dict) else {}
+        arguments = function.get("arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                arguments = {}
+        if not isinstance(arguments, dict):
+            arguments = {}
+        name = str(function.get("name", "")).strip()
+        if name:
+            normalized.append({"name": name, "parameters": arguments})
+
+    if normalized:
+        return {"action": "tool", "tool_calls": normalized}
+    return {"action": "final", "answer": str(message.get("content") or "")}
 
 
 def _summarize_tool_output(output: Any, limit: int = 160) -> str:

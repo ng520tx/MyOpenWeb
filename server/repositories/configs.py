@@ -17,6 +17,9 @@ def get_provider_config() -> ProviderConfig:
     retrieval_mode = values.get("retrieval_mode") or "hybrid"
     if retrieval_mode not in ("vector", "hybrid"):
         retrieval_mode = "hybrid"
+    agent_tool_protocol = values.get("agent_tool_protocol") or "prompt"
+    if agent_tool_protocol not in ("prompt", "native"):
+        agent_tool_protocol = "prompt"
     return ProviderConfig(
         provider_type=values.get("provider_type", "ollama"),
         provider_base_url=values.get("provider_base_url", "http://localhost:11434/v1"),
@@ -29,6 +32,7 @@ def get_provider_config() -> ProviderConfig:
         rerank_enabled=(values.get("rerank_enabled") or "0") == "1",
         rerank_model=values.get("rerank_model") or "BAAI/bge-reranker-base",
         query_rewrite_enabled=(values.get("query_rewrite_enabled") or "1") == "1",
+        agent_tool_protocol=agent_tool_protocol,
     )
 
 
@@ -36,6 +40,7 @@ def update_provider_config(config: ProviderConfig) -> ProviderConfig:
     now = int(time.time() * 1000)
     ocr_mode = config.ocr_mode if config.ocr_mode in ("auto", "always") else "auto"
     retrieval_mode = config.retrieval_mode if config.retrieval_mode in ("vector", "hybrid") else "hybrid"
+    agent_tool_protocol = config.agent_tool_protocol if config.agent_tool_protocol in ("prompt", "native") else "prompt"
     stored = {
         "provider_type": config.provider_type,
         "provider_base_url": config.provider_base_url.strip(),
@@ -48,6 +53,7 @@ def update_provider_config(config: ProviderConfig) -> ProviderConfig:
         "rerank_enabled": "1" if config.rerank_enabled else "0",
         "rerank_model": (config.rerank_model or "BAAI/bge-reranker-base").strip(),
         "query_rewrite_enabled": "1" if config.query_rewrite_enabled else "0",
+        "agent_tool_protocol": agent_tool_protocol,
     }
 
     with get_db() as conn:
@@ -68,4 +74,5 @@ def update_provider_config(config: ProviderConfig) -> ProviderConfig:
         rerank_enabled=config.rerank_enabled,
         rerank_model=stored["rerank_model"],
         query_rewrite_enabled=config.query_rewrite_enabled,
+        agent_tool_protocol=agent_tool_protocol,
     )

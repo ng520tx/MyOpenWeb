@@ -166,6 +166,8 @@ def _build_openai_body(
         "temperature": payload.get("temperature", 0.7),
         "max_tokens": payload.get("max_tokens", 4096),
     }
+    if payload.get("tools"):
+        body["tools"] = payload["tools"]
     if config.provider_type == "ollama":
         body["chat_template_kwargs"] = {"enable_thinking": False}
     return body
@@ -197,9 +199,13 @@ def _build_ollama_body(payload: dict) -> dict:
         }
         if image_values:
             normalized["images"] = image_values
+        # Native function calling: keep assistant tool_calls in the replayed
+        # history so the model sees which call each tool result answers.
+        if message.get("tool_calls"):
+            normalized["tool_calls"] = message["tool_calls"]
         ollama_messages.append(normalized)
 
-    return {
+    body = {
         "model": payload["model"],
         "messages": ollama_messages,
         "stream": payload.get("stream", True),
@@ -209,6 +215,9 @@ def _build_ollama_body(payload: dict) -> dict:
             "num_predict": payload.get("max_tokens", 4096),
         },
     }
+    if payload.get("tools"):
+        body["tools"] = payload["tools"]
+    return body
 
 
 async def _fetch_models_with_details(config: ProviderConfig) -> tuple[list[dict], ProviderConfig, str]:
@@ -368,15 +377,21 @@ async def create_chat_completion(config: ProviderConfig, payload: dict):
 
             if use_ollama_native:
                 result = response.json()
-                content = result.get("message", {}).get("content", "")
+                raw_message = result.get("message", {})
+                message: dict = {
+                    "role": "assistant",
+                    "content": raw_message.get("content", ""),
+                }
+                if raw_message.get("tool_calls"):
+                    message["tool_calls"] = raw_message["tool_calls"]
                 return {
                     "id": result.get("id", "chatcmpl-ollama"),
                     "object": "chat.completion",
                     "choices": [
                         {
                             "index": 0,
-                            "message": {"role": "assistant", "content": content},
-                            "finish_reason": "stop",
+                            "message": message,
+                            "finish_reason": "tool_calls" if message.get("tool_calls") else "stop",
                         }
                     ],
                 }
@@ -394,3 +409,13 @@ async def create_chat_completion_text(config: ProviderConfig, payload: dict) -> 
     if not isinstance(result, dict):
         raise HTTPException(status_code=502, detail="Non-stream chat request returned an unexpected response")
     return str(result.get("choices", [{}])[0].get("message", {}).get("content", ""))
+
+
+async def create_chat_completion_message(config: ProviderConfig, payload: dict) -> dict:
+    """Non-stream completion returning the full assistant message (content +
+    tool_calls). Used by the agent's native function-calling protocol."""
+    result = await create_chat_completion(config, {**payload, "stream": False})
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=502, detail="Non-stream chat request returned an unexpected response")
+    message = result.get("choices", [{}])[0].get("message", {})
+    return message if isinstance(message, dict) else {"role": "assistant", "content": str(message)}

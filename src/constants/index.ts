@@ -33,6 +33,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   rerankModel: DEFAULT_RERANK_MODEL,
   queryRewriteEnabled: true,
   agentEnabled: false,
+  agentToolProtocol: 'prompt',
   model: DEFAULT_MODEL,
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
   temperature: 0.7,

@@ -13,6 +13,7 @@ interface ProviderConfigPayload {
   rerank_enabled: boolean;
   rerank_model: string;
   query_rewrite_enabled: boolean;
+  agent_tool_protocol: ProviderConfig['agentToolProtocol'];
 }
 
 type ProviderSettings = Pick<
@@ -28,6 +29,7 @@ type ProviderSettings = Pick<
   | 'rerankEnabled'
   | 'rerankModel'
   | 'queryRewriteEnabled'
+  | 'agentToolProtocol'
 >;
 
 export interface ProviderVerifyResult {
@@ -59,6 +61,7 @@ function toProviderPayload(settings: ProviderSettings): ProviderConfigPayload {
     rerank_enabled: settings.rerankEnabled,
     rerank_model: (settings.rerankModel || 'BAAI/bge-reranker-base').trim(),
     query_rewrite_enabled: settings.queryRewriteEnabled,
+    agent_tool_protocol: settings.agentToolProtocol,
   };
 }
 
@@ -75,6 +78,7 @@ function fromProviderPayload(payload: ProviderConfigPayload): ProviderConfig {
     rerankEnabled: Boolean(payload.rerank_enabled),
     rerankModel: payload.rerank_model || 'BAAI/bge-reranker-base',
     queryRewriteEnabled: payload.query_rewrite_enabled !== false,
+    agentToolProtocol: payload.agent_tool_protocol === 'native' ? 'native' : 'prompt',
   };
 }
 

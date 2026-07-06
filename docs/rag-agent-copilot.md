@@ -68,6 +68,7 @@ flowchart TD
 - BM25 用 SQLite FTS5：零新增服务。中文分词用自研 CJK 二元组 + 英文小写单词（`services/tokenize.py`），解决 unicode61 分词器把整段中文当一个 token 的问题；索引和查询走同一分词器保证匹配一致。
 - 混合检索用 RRF：向量排名与 BM25 排名按 `1/(60+rank)` 融合，天然免调权重、对分数尺度不敏感；候选池取 `max(top_k*3, 10)` 给融合与重排留空间。
 - rerank 可降级：cross-encoder（bge-reranker）依赖单独放 `server/rerank/requirements.txt`，未安装或模型加载失败时负缓存 + 自动回退融合排序，核心链路不因 rerank 阻塞。
+- 两种工具协议可切换（设置 → Agent）：`prompt` 用系统提示词约定 JSON 输出，任何能写 JSON 的模型都能跑（含不支持 tools 的小模型），脏输出有归一化容错；`native` 走模型原生 function calling（tools 参数 + tool_calls 响应 + role=tool 回填），格式更稳、省去协议说明的 token，但依赖模型端支持（qwen2.5 实测可用）。
 - 不用 Dify：RAG 与 Agent 都自研，面试更好讲底层；Dify 仅作为后期可选编排 provider 的扩展点。
 - 普通聊天 vs Agent 两条 RAG 路径：
   - 关闭 Agent + 选了知识库 → `/api/chat/completions`，后端直接检索并把片段注入 system_prompt（确定性强）。
@@ -212,6 +213,8 @@ Agent 模式 + knowledge_id → agent_runner
 - **为什么不用向量数据库 / Dify？**：个人/演示规模 SQLite + 内存余弦足够，且能讲清每一步；强调"自己写的"比"拖流程"更有说服力。架构上预留了 PostgreSQL + pgvector 与 Dify provider 扩展点，规模上来按接口替换实现即可。
 - **怎么防幻觉 / 保证可信？**：强约束 system_prompt（只用参考资料、未命中明确说不知道）、返回引用来源给前端展示、embedding 维度不匹配时拒绝用旧索引并提示重建。
 - **Agent 和普通 RAG 的区别？**：普通 RAG 是后端确定性检索后注入 system_prompt（结果稳定、好复现）；Agent 把检索做成 `search_knowledge` 工具，由模型自主决定是否检索、检索什么，并记录工具调用日志，更接近"智能体"。两种路径按场景选用。
+- **prompt-based 和原生 function calling 的区别？**（两种都实现了，可切换）：prompt 协议把工具说明写进系统提示词、约定 JSON 输出，兼容任何模型，但要自己做解析与容错（小模型经常输出 `{"action":"calculator",...}` 这类脏格式）；native 协议把 tools schema 直接传给模型端接口，返回结构化 `tool_calls`、按 `role=tool` 回填，格式稳定、少烧协议 token，但要求模型支持（qwen2.5 支持，很多小模型不支持）。生产上建议：模型可控时优先 native，兜底 prompt。
+- **多轮对话检索为什么会失效？怎么解决？**：追问经常省略主语（"它的端口是多少"），原文检索时 BM25 与向量都缺少可区分关键词。解决：检索前用当前模型把"最近 3 轮历史 + 追问"改写成自包含查询（temperature=0 小请求），实测 8 条指代型追问 Hit@1 从 0.62 到 0.88；改写失败自动回退原文，链路不受影响。
 - **（加分，体现迭代）两条路径的拒答怎么保持一致？**：最初 Agent 模式拒答偏松，问库外问题会用通用知识发挥；后来在"选中知识库"时给 Agent 注入了拒答约束（检索为空或不相关就明确说"知识库中没有找到相关信息"），让 Agent 路径与普通 RAG 路径的拒答行为统一。这是从实测里发现并修掉的问题，能体现工程迭代意识。
 - **切片大小/overlap 怎么定的？**：按字符切并优先在自然边界（段落/句子）断开，留 overlap 防止答案被切断；可按文档类型调参。讲清"为什么不是越大越好/越小越好"的权衡即可。
 - **工程化体现在哪？**：分层后端、统一 SSE 协议、Provider/embedding 的 WSL→Windows 主机回退、运行日志可观测、依赖可降级（缺 pdf/docx 库时报清晰错误而非崩溃）、配置持久化到后端。

@@ -100,6 +100,7 @@ export interface ModelConfig {
 
 export type OcrMode = 'auto' | 'always';
 export type RetrievalMode = 'vector' | 'hybrid';
+export type AgentToolProtocol = 'prompt' | 'native';
 
 export interface AppSettings {
   providerType: ProviderType;
@@ -114,6 +115,7 @@ export interface AppSettings {
   rerankModel: string;
   queryRewriteEnabled: boolean;
   agentEnabled: boolean;
+  agentToolProtocol: AgentToolProtocol;
   model: string;
   systemPrompt: string;
   temperature: number;
@@ -136,6 +138,7 @@ export interface ProviderConfig {
   rerankEnabled: boolean;
   rerankModel: string;
   queryRewriteEnabled: boolean;
+  agentToolProtocol: AgentToolProtocol;
 }
 
 export interface FileRecord {
