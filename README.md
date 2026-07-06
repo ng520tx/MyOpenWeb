@@ -27,9 +27,7 @@
 |---|---|
 | ![移动端知识库管理](docs/images/mobile-knowledge.png) | ![移动端对话](docs/images/mobile-chat.png) |
 
-<!-- 演示视频（B 站上传后替换链接并取消注释）
-演示视频：[5 分钟完整演示（RAG 引用/拒答 + Agent 工具 + Docker 部署）](B站链接)
--->
+**演示视频**：[5 分钟完整演示 demo.mp4 —— RAG 引用/拒答 + Agent 工具 + Docker 部署](https://github.com/ng520tx/MyOpenWeb/releases/download/v0.1.0/demo.mp4)（35MB，点击即可播放/下载）
 
 ## 总体架构
 
