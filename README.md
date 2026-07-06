@@ -150,6 +150,15 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 
 多轮追问经常丢失主语（"它的端口"），检索前用对话历史把问题改写为自包含查询（qwen2.5:3b，改写失败自动回退原文），首位命中提升 26pp。复现：`python -m server.eval.run_multiturn_eval`。
 
+**生成质量评测（LLM-as-judge）**：检索之外也评"答得好不好"。等距抽 12 条 QA，生成（qwen2.5:3b）与评审（qwen3.5:4b）分离打分，维度对应 RAGAS 的 faithfulness / answer relevancy（报告见 [server/eval/results-judge.md](server/eval/results-judge.md)）：
+
+| 指标 | 平均分（1–5） |
+|---|---|
+| Faithfulness（是否忠于检索资料，拒答计忠实） | 4.00 |
+| Answer Relevancy（是否切中问题） | 4.17 |
+
+复现：`python -m server.eval.run_judge_eval`。低分样例集中在小模型引用编号错乱，生产建议换更强评审模型并人工复核低分回归。
+
 ## 核心设计与取舍
 
 - **为什么自研 RAG / Agent 而不用 LangChain、Dify**：目标是把检索与工具调用的每一步（切片策略、相似度计算、拒答规则、工具循环上限、运行日志）做成可解释、可调试的白盒；规模上来后再按接口替换为框架或向量库，`repositories` 层已预留切换点。

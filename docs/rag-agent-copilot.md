@@ -285,7 +285,12 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 - rerank（bge-reranker-base）把 chunk_size=600 的 Hit@1 从 0.93 拉到 1.00，但 CPU 推理让单次检索到 5s 量级——质量优先场景可开，在线低延迟场景建议 GPU / ONNX / 缩小候选池。
 - chunk_size 400/600/800 中，600 在该语料上是质量与块数的平衡点。
 
-面试可讲的点：评测集怎么建、Hit@K 与 MRR 怎么算、RRF 为什么免调权、rerank 的收益与代价、为什么中文 BM25 需要自己分词。
+另有两套补充评测：
+
+- **多轮改写评测**（`run_multiturn_eval.py`，8 条指代型追问）：原文直接检索 Hit@1 0.62 / MRR 0.792，LLM 改写后 0.88 / 0.938，报告见 `results-multiturn.md`。
+- **生成质量评测**（`run_judge_eval.py`，LLM-as-judge）：生成（qwen2.5:3b）与评审（qwen3.5:4b）分离，对应 RAGAS 的 faithfulness / answer relevancy 两维打 1–5 分，实测 4.00 / 4.17，拒答计为忠实，报告见 `results-judge.md`。与 RAGAS 的关系：指标同源，但零依赖自研（不引入 ragas + langchain 依赖树），面试可讲"指标怎么定义、judge prompt 怎么写、小模型互评的噪声怎么控"。
+
+面试可讲的点：评测集怎么建、Hit@K 与 MRR 怎么算、RRF 为什么免调权、rerank 的收益与代价、为什么中文 BM25 需要自己分词、检索评测与生成评测（faithfulness/relevancy）为什么要分开。
 
 ## 8. OCR 文档解析（PP-StructureV3）
 
