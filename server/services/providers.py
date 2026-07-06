@@ -14,6 +14,16 @@ from server.schemas.config import ProviderConfig, ProviderVerifyResult
 
 
 TIMEOUT = httpx.Timeout(60.0, connect=10.0)
+# Non-stream chat (agent decisions, tool summaries) can take minutes on a cold
+# local model: Ollama first loads weights, then generates the full answer in
+# one shot. 60s read timeouts were cutting these off mid-load.
+CHAT_TIMEOUT = httpx.Timeout(300.0, connect=10.0)
+
+
+def _describe_error(exc: Exception) -> str:
+    """httpx timeouts often stringify to ''; keep the exception type visible."""
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
 
 
 def _is_ollama_vision_request(messages: list[dict]) -> bool:
@@ -331,14 +341,14 @@ async def create_chat_completion(config: ProviderConfig, payload: dict):
                     break
 
             if last_error is not None:
-                yield _format_sse_chunk(delta=f"Error: {last_error}")
+                yield _format_sse_chunk(delta=f"Error: {_describe_error(last_error)}")
                 yield _format_sse_chunk(finish_reason="stop")
                 yield b"data: [DONE]\n\n"
 
         return StreamingResponse(iterator(), media_type="text/event-stream")
 
     last_error: Exception | None = None
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=CHAT_TIMEOUT) as client:
         for candidate in _candidate_configs(config):
             openai_base_url, ollama_native_url = _normalize_urls(candidate)
             headers = _build_headers(candidate)
@@ -352,7 +362,9 @@ async def create_chat_completion(config: ProviderConfig, payload: dict):
                 last_error = exc
                 continue
             except httpx.HTTPStatusError as exc:
-                raise HTTPException(status_code=502, detail=f"Chat request failed: {exc}") from exc
+                raise HTTPException(
+                    status_code=502, detail=f"Chat request failed: {_describe_error(exc)}"
+                ) from exc
 
             if use_ollama_native:
                 result = response.json()
@@ -371,7 +383,10 @@ async def create_chat_completion(config: ProviderConfig, payload: dict):
 
             return response.json()
 
-    raise HTTPException(status_code=502, detail=f"Chat request failed: {last_error}") from last_error
+    raise HTTPException(
+        status_code=502,
+        detail=f"Chat request failed: {_describe_error(last_error)}" if last_error else "Chat request failed",
+    ) from last_error
 
 
 async def create_chat_completion_text(config: ProviderConfig, payload: dict) -> str:
