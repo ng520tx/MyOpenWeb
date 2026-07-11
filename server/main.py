@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -20,7 +21,6 @@ from server.routers import (
     tasks,
 )
 
-
 WEB_DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
 
 
@@ -28,10 +28,20 @@ def create_app() -> FastAPI:
     init_db()
 
     app = FastAPI(title="MyOpenWeb Server", version="0.1.0")
+    # Default stays open for the LAN/dev workflow (Vite dev server, WebView
+    # shells); intranet deploys can pin origins, e.g.
+    # MYOPENWEB_CORS_ORIGINS=https://copilot.corp.example. Credentials are
+    # only enabled with pinned origins — the CORS spec forbids the
+    # wildcard + credentials combination.
+    cors_origins = [
+        origin.strip()
+        for origin in os.environ.get("MYOPENWEB_CORS_ORIGINS", "*").split(",")
+        if origin.strip()
+    ]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=cors_origins,
+        allow_credentials="*" not in cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )

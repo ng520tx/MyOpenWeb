@@ -6,6 +6,30 @@ from server.db import get_db
 from server.schemas.config import ProviderConfig
 
 
+def mask_provider_config(config: ProviderConfig) -> ProviderConfig:
+    """Presentation copy for API responses: never leak the stored key.
+
+    Any client on the LAN can call GET /api/config/provider, so the key is
+    reduced to a ``***xxxx`` fingerprint (enough for the user to recognise
+    which key is configured).
+    """
+    key = config.provider_api_key
+    if not key:
+        return config
+    masked = f"***{key[-4:]}" if len(key) > 4 else "****"
+    return config.model_copy(update={"provider_api_key": masked})
+
+
+def resolve_provider_config(config: ProviderConfig) -> ProviderConfig:
+    """Undo masking on write: a key containing ``*`` is the masked value
+    round-tripped by the client and means "keep the stored key". Real keys
+    never contain ``*``; an empty string still clears the key."""
+    if "*" in config.provider_api_key:
+        stored = get_provider_config().provider_api_key
+        return config.model_copy(update={"provider_api_key": stored})
+    return config
+
+
 def get_provider_config() -> ProviderConfig:
     with get_db() as conn:
         rows = conn.execute("SELECT key, value FROM app_config").fetchall()
