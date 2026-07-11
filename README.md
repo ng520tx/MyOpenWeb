@@ -6,6 +6,8 @@
 
 > RAG 与 Agent 全部自研（不依赖 LangChain / Dify），每一层都能讲清底层实现；架构参考 [Open WebUI](https://github.com/open-webui/open-webui) 拆解重建。
 
+![MyOpenWeb 演示：知识库引用来源问答 + Agent 日志分析](docs/images/demo.gif)
+
 ## 核心能力
 
 - **知识库问答（RAG）**：建库 → 上传文件 → 切片向量化 → 混合检索（向量余弦 + BM25 经 RRF 融合）→ 可选 bge-reranker 重排 → 带 `[序号]` 引用来源回答；库外问题明确拒答，不编造
@@ -198,6 +200,7 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 - **防幻觉**：强约束 system prompt（只依据参考资料回答）+ 引用来源展示 + 检索未命中时明确拒答 + 换 embedding 模型导致维度不一致时拒用旧索引并提示重建。
 - **可观测性**：Agent 每轮的模型判断、工具调用、工具结果、最终回答全部落库，`GET /api/agent/runs/{id}` 可回放，前端可展开。
 - **工具安全**：工具由后端白名单实现，模型只能表达"调用意图"，不能执行任意代码；计算器用表达式解析器而非 `eval`。
+- **安全边界**：定位为企业内网可信局域网内的单实例部署，刻意不做用户体系（单用户场景引入登录/会话只增加复杂度）。Provider API Key 只落后端 SQLite，所有接口返回统一脱敏为 `***xxxx` 指纹、客户端回传掩码不覆盖原值；CORS 默认放开便于开发，内网部署可用 `MYOPENWEB_CORS_ORIGINS` 固定来源域名。若需公网暴露，应前置反向代理鉴权（如 Nginx basic auth / OAuth2 proxy）。
 - **协议统一**：Ollama NDJSON、OpenAI SSE 在后端统一转换为 OpenAI SSE，前端只有一条流解析路径。
 
 ## 项目结构
@@ -215,8 +218,13 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 
 ## 文档
 
-- [架构展示页](docs/architecture.html)：单文件可视化工程档案（能力矩阵 / 架构图 / 检索链路 / 评测图表），浏览器直接打开即可
-- [MyOpenWeb 修炼手册](doc/index.html)：基于本仓库真实代码的 10+1 章 AI 应用开发教材（Python 速成 → FastAPI → LLM → **Ch03½ Prompt/Context/Transformer/多Agent** → RAG → Agent → MCP → 评测/LLMOps → 工程化 → 精进路线 → 面试通关），浅色/深色双主题，浏览器打开 `doc/index.html` 即读
+**在线阅读（GitHub Pages，无需 clone）**：
+
+- [架构展示页（在线）](https://ng520tx.github.io/MyOpenWeb/architecture.html)：单文件可视化工程档案（能力矩阵 / 架构图 / 检索链路 / 评测图表）
+- [MyOpenWeb 修炼手册（在线）](https://ng520tx.github.io/MyOpenWeb/manual/)：基于本仓库真实代码的 10+1 章 AI 应用开发教材（Python 速成 → FastAPI → LLM → **Ch03½ Prompt/Context/Transformer/多Agent** → RAG → Agent → MCP → 评测/LLMOps → 工程化 → 精进路线 → 面试通关），浅色/深色双主题
+
+仓库内文档（本地打开 [docs/architecture.html](docs/architecture.html) 与 [doc/index.html](doc/index.html) 效果相同）：
+
 - [项目架构](docs/project-architecture.md)：技术栈、数据流、数据库设计、Bridge 协议
 - [RAG + Agent 模块](docs/rag-agent-copilot.md)：能力总览、API 参考、使用步骤、设计取舍
 - [Open WebUI 对照分析](docs/open-webui-analysis.md)：参考项目的拆解与借鉴边界

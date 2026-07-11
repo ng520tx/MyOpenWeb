@@ -1,0 +1,82 @@
+name: Deploy docs to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "doc/**"
+      - "docs/architecture.html"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble static site
+        run: |
+          mkdir -p _site/manual
+          cp -r doc/* _site/manual/
+          cp docs/architecture.html _site/architecture.html
+          cat > _site/index.html <<'EOF'
+          <!DOCTYPE html>
+          <html lang="zh-CN">
+          <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>MyOpenWeb · 在线文档</title>
+          <style>
+            body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+                 background:#0f1115;color:#e6e6e6;font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+            main{max-width:560px;padding:40px 24px}
+            h1{font-size:26px;margin:0 0 8px}
+            p{color:#9aa1ac;line-height:1.7;margin:0 0 28px}
+            a.card{display:block;padding:18px 20px;margin-bottom:14px;border:1px solid #2a2f3a;border-radius:12px;
+                   color:#e6e6e6;text-decoration:none;transition:border-color .15s}
+            a.card:hover{border-color:#4f8cff}
+            a.card b{display:block;font-size:16px;margin-bottom:4px}
+            a.card span{color:#9aa1ac;font-size:13px}
+            .repo{font-size:13px;color:#9aa1ac}
+            .repo a{color:#4f8cff;text-decoration:none}
+          </style>
+          </head>
+          <body>
+          <main>
+            <h1>MyOpenWeb 在线文档</h1>
+            <p>企业研发/运维 AI Copilot 工作台 —— 自研 RAG 知识库 + 工具型 Agent + MCP Server</p>
+            <a class="card" href="manual/"><b>MyOpenWeb 修炼手册</b><span>10+1 章 AI 应用开发教材：Python → FastAPI → LLM → RAG → Agent → MCP → 评测 → 工程化 → 面试</span></a>
+            <a class="card" href="architecture.html"><b>架构展示页</b><span>能力矩阵 / 架构图 / 检索链路 / 评测图表的单页可视化工程档案</span></a>
+            <p class="repo">源码：<a href="https://github.com/ng520tx/MyOpenWeb">github.com/ng520tx/MyOpenWeb</a></p>
+          </main>
+          </body>
+          </html>
+          EOF
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
