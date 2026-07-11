@@ -16,7 +16,7 @@
         <div class="ch-eyebrow"><span class="badge">CH 08</span><span class="part">第三部分 · 工程与进阶</span></div>
         <h1>工程化<br>—— pytest / CI / Docker 私有化</h1>
         <p class="lede">这一章是你的主场：测试、CI、容器化你都懂，要补的只是「AI 应用怎么做这些」的特殊姿势——<b>LLM 不可控怎么写单测？模型服务怎么打进镜像？</b>答案分别是 mock 掉模型、以及不打进去。本章顺带把「优雅降级」这个贯穿全项目的工程哲学收拢成型。</p>
-        <div class="ch-meta"><span>预计 3 小时</span><span>难度 ★★☆☆☆</span><span>对应源码 server/tests/（12 个文件）、Dockerfile、.github/workflows/ci.yml</span></div>
+        <div class="ch-meta"><span>预计 3 小时</span><span>难度 ★★☆☆☆</span><span>对应源码 server/tests/（18 个文件）、Dockerfile、.github/workflows/ci.yml</span></div>
       </div>
 
       <div class="goals">
@@ -86,23 +86,30 @@ def _database() -> None:
         <li>同样的沙箱思路复用到了评测（<code>MYOPENWEB_DATA_DIR=server/eval/.data</code>）和 Docker（<code>/data</code> 卷）——<b>一个环境变量，三处受益</b>，这是第 2 章分层里 db.py 预留的接缝。</li>
       </ul></div>
 
-      <h2 class="sec-t"><span class="no">SECTION 8.2</span>CI：GitHub Actions 双车道</h2>
+      <h2 class="sec-t"><span class="no">SECTION 8.2</span>CI：GitHub Actions 三车道</h2>
       <pre data-lang="bash" data-path=".github/workflows/ci.yml（真实配置，摘要）">
 on: push/PR → main
 
 jobs:
-  backend:                      # 车道1：后端
-    - setup-python 3.12 (cache: pip)
-    - pip install -r server/requirements-dev.txt
-    - python -m pytest server/tests -q        # 全部单测，无外部依赖
+  lint:                         # 车道1：风格与静态检查
+    - ruff check server                       # Python lint
+    - pnpm lint                               # eslint（含 react-hooks 规则）
 
-  frontend:                     # 车道2：前端
-    - pnpm install --frozen-lockfile
+  backend:                      # 车道2：后端测试（sqlite + pgvector）
+    services:
+      pgvector: pgvector/pgvector:pg16        # 真 PostgreSQL 服务容器
+    - pip install -r requirements-dev.txt -r requirements-pgvector.txt
+    - python -m pytest server/tests -q        # 94 个测试，含双后端契约用例
+      env: MYOPENWEB_TEST_PG_DSN=postgresql://...
+
+  frontend:                     # 车道3：前端测试 + 构建
+    - pnpm test                               # vitest（SSE 解析/合并逻辑等）
     - pnpm build                              # tsc 类型检查 + vite 构建</pre>
       <div class="code-notes"><ul>
-        <li>两个 job <b>并行</b>互不阻塞。后端车道能在 CI 裸容器里跑通的前提正是 8.1 的设计：测试不需要 Ollama、不需要 GPU、不需要网络——<b>可 mock 的边界 = 可 CI 的系统</b>。</li>
+        <li>三个 job <b>并行</b>互不阻塞。后端车道能跑通的前提正是 8.1 的设计：常规测试不需要 Ollama、不需要 GPU、不需要网络——<b>可 mock 的边界 = 可 CI 的系统</b>。</li>
+        <li>唯一的「外部依赖」是刻意分层的：pgvector 契约测试在 CI 用 <b>服务容器</b>起真 PostgreSQL 执行，本地没有 PG 时自动 skip——「必须真实验证的」进 CI 服务容器，「可以 mock 的」保持零依赖，两级策略各得其所。</li>
         <li>前端车道 <code>pnpm build</code> 隐含 <code>tsc</code>——类型错误挡在合并前，等价于一层静态测试。<code>--frozen-lockfile</code> 保证依赖和本地完全一致（你熟）。</li>
-        <li>面试一句话：「每次 push，12 个测试文件 + 前端类型检查全绿才算数——AI 项目也按正经软件工程来。」</li>
+        <li>面试一句话：「每次 push，lint + 18 个测试文件（94 用例，含连真 PostgreSQL 的契约测试）+ 前端类型检查全绿才算数——AI 项目也按正经软件工程来。」</li>
       </ul></div>
 
       <h2 class="sec-t"><span class="no">SECTION 8.3</span>Docker：多阶段构建与「模型不进镜像」</h2>
@@ -176,7 +183,7 @@ docker compose down && docker compose up -d
         <details class="iv-card">
           <summary><span class="q-no">Q1</span>LLM 应用的输出不确定，你怎么写测试？<span class="chev">▸</span></summary>
           <div class="a">
-            <p>「把系统切成确定性和概率性两半。确定性的（切片、RRF 排序、JSON 解析、工具分发、SSE 组帧）占代码量大头，正常单测；模型调用在测试里用 monkeypatch 换成剧本回放的 stub——形状和真实响应一致，内容预设。这样 Agent 循环的『决策→工具→回填→终止』全路径可以确定性验证，包括 usage 累加、错误回填这些细节。模型『答得好不好』不归单测管，归第 7 章的评测集管。12 个测试文件在 CI 裸容器里跑，零外部依赖。」</p>
+            <p>「把系统切成确定性和概率性两半。确定性的（切片、RRF 排序、JSON 解析、工具分发、SSE 组帧）占代码量大头，正常单测；模型调用在测试里用 monkeypatch 换成剧本回放的 stub——形状和真实响应一致，内容预设。这样 Agent 循环的『决策→工具→回填→终止』全路径可以确定性验证，包括 usage 累加、错误回填这些细节。模型『答得好不好』不归单测管，归第 7 章的评测集管。18 个测试文件 94 个用例：常规用例在 CI 裸容器零依赖跑，唯一例外是 pgvector 契约测试——CI 起真 PostgreSQL 服务容器验证、本地无 PG 自动 skip，『能 mock 的 mock，必须真实的进服务容器』分层对待。」</p>
           </div>
         </details>
 
@@ -215,7 +222,7 @@ docker compose down && docker compose up -d
         <div class="r-body"><ul>
           <li>AI 应用测试 = <b>确定性逻辑真测 + LLM 边界 mock 成剧本回放</b>；质量归评测，正确归单测。</li>
           <li><code>conftest.py</code> 沙箱数据目录 ≈ Jest setupFiles；monkeypatch ≈ mockImplementation。</li>
-          <li>CI 双车道并行：pytest 全绿 + tsc/vite 构建通过才能合并；可 mock 的边界 = 可 CI 的系统。</li>
+          <li>CI 三车道并行：lint + pytest（含连真 PostgreSQL 的契约测试）+ vitest/tsc/vite 全绿才能合并；可 mock 的边界 = 可 CI 的系统。</li>
           <li>Docker 多阶段：Node 只在构建期，镜像无 node_modules；状态收敛 /data 卷；<b>模型是外部依赖不进镜像</b>。</li>
           <li>优雅降级是体系不是技巧：七处降级一个模式——增强层可拔插，核心链路永远可用。</li>
         </ul></div>

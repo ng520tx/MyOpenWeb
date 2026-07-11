@@ -229,7 +229,7 @@ Agent 模式 + knowledge_id → agent_runner
 
 ### 6.2 面试话术（高频问题）
 
-- **整体架构一句话**：移动端（Android 壳 + React H5 流式）→ FastAPI 分层后端（routers/services/repositories/schemas，统一 OpenAI SSE）→ 自研 RAG（混合检索 + rerank + 评测）+ 工具型 Agent → 多模型（Ollama / OpenAI Compatible），数据全落 SQLite，Docker 一键私有部署。
+- **整体架构一句话**：移动端（Android 壳 + React H5 流式）→ FastAPI 分层后端（routers/services/repositories/schemas，统一 OpenAI SSE）→ 自研 RAG（混合检索 + rerank + 评测）+ 工具型 Agent → 多模型（Ollama / OpenAI Compatible），业务数据落 SQLite、向量后端经 VectorStore 抽象可切 pgvector，Docker 一键私有部署。
 - **RAG 是怎么实现的？**：文本抽取 → 按字符 + 自然边界 + overlap 切片 → embedding 批量向量化入库（SQLite 存 JSON 向量）→ 查询时向量余弦排名，hybrid 模式再融合 BM25（FTS5）排名（RRF），可选 cross-encoder 重排 → 把命中片段带 `[序号]` 来源拼进 system_prompt → 让模型只依据资料回答，未命中则拒答。
 - **混合检索为什么用 RRF 而不是加权分数？**：向量余弦和 BM25 分数量纲不同，直接加权要调参且对分布敏感；RRF 只用排名（`1/(60+rank)`），免调权、稳健，是业界常用融合方式。实测比纯向量 Hit@1 提升 8~11pp。
 - **中文 BM25 怎么处理分词？**：SQLite FTS5 的 unicode61 会把整段中文当一个 token。自研轻量分词（CJK 字符二元组 + 英文小写词），索引与查询同一分词器，零依赖；规模大再换 jieba。
