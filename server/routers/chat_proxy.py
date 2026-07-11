@@ -12,7 +12,6 @@ from server.schemas.chat import ChatCompletionRequest
 from server.services.providers import create_chat_completion
 from server.services.rag import retrieve_for_chat
 
-
 router = APIRouter(prefix="/api", tags=["chat"])
 
 
@@ -45,7 +44,7 @@ def _prepend_sources(response: StreamingResponse, sources: list[dict[str, Any]])
 
     async def iterator() -> AsyncIterator[bytes]:
         head = {"sources": sources, "choices": [{"delta": {}, "finish_reason": None}]}
-        yield f"data: {json.dumps(head, ensure_ascii=False)}\n\n".encode("utf-8")
+        yield f"data: {json.dumps(head, ensure_ascii=False)}\n\n".encode()
         async for chunk in original:
             yield chunk
 

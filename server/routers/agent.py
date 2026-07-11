@@ -7,7 +7,6 @@ from server.repositories.configs import get_provider_config
 from server.schemas.chat import ChatCompletionRequest
 from server.services.agent_runner import create_agent_completion
 
-
 router = APIRouter(prefix="/api", tags=["agent"])
 
 

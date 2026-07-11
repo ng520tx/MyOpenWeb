@@ -6,7 +6,6 @@ from fastapi import HTTPException
 from server.schemas.config import ProviderConfig
 from server.services.providers import _build_headers, _candidate_configs, _normalize_urls
 
-
 TIMEOUT = httpx.Timeout(120.0, connect=10.0)
 
 

@@ -33,38 +33,37 @@ def _first_json(result):
 
 
 async def main() -> None:
-    async with stdio_client(SERVER) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
+    async with stdio_client(SERVER) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
 
-            tools = await session.list_tools()
-            names = sorted(tool.name for tool in tools.tools)
-            print(f"[1] list_tools -> {names}")
+        tools = await session.list_tools()
+        names = sorted(tool.name for tool in tools.tools)
+        print(f"[1] list_tools -> {names}")
 
+        result = await session.call_tool(
+            "analyze_log",
+            {"log": "2026-01-01 ERROR db timeout\n2026-01-01 WARN slow query\n2026-01-01 INFO ok"},
+        )
+        payload = _first_json(result)
+        print(f"[2] analyze_log -> level_counts={payload.get('level_counts')}")
+
+        result = await session.call_tool("list_knowledge_bases", {})
+        bases = _json_blocks(result)
+        print(f"[3] list_knowledge_bases -> {[b['name'] for b in bases]}")
+
+        if bases:
+            name = bases[0]["name"]
             result = await session.call_tool(
-                "analyze_log",
-                {"log": "2026-01-01 ERROR db timeout\n2026-01-01 WARN slow query\n2026-01-01 INFO ok"},
+                "search_knowledge", {"knowledge": name, "query": "请假流程", "top_k": 2}
             )
-            payload = _first_json(result)
-            print(f"[2] analyze_log -> level_counts={payload.get('level_counts')}")
-
-            result = await session.call_tool("list_knowledge_bases", {})
-            bases = _json_blocks(result)
-            print(f"[3] list_knowledge_bases -> {[b['name'] for b in bases]}")
-
-            if bases:
-                name = bases[0]["name"]
-                result = await session.call_tool(
-                    "search_knowledge", {"knowledge": name, "query": "请假流程", "top_k": 2}
-                )
-                data = _first_json(result)
-                hits = data.get("results", [])
-                print(
-                    f"[4] search_knowledge('{name}') -> {len(hits)} hits; "
-                    f"top={hits[0]['filename'] if hits else 'N/A'}"
-                )
-            else:
-                print("[4] search_knowledge skipped (no knowledge bases)")
+            data = _first_json(result)
+            hits = data.get("results", [])
+            print(
+                f"[4] search_knowledge('{name}') -> {len(hits)} hits; "
+                f"top={hits[0]['filename'] if hits else 'N/A'}"
+            )
+        else:
+            print("[4] search_knowledge skipped (no knowledge bases)")
 
     print("MCP smoke OK")
 

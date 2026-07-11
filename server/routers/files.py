@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, HTTPException, Response, UploadFile, status
 
 from server.repositories.configs import get_provider_config
 from server.repositories.files import (
@@ -16,7 +16,6 @@ from server.repositories.files import (
 from server.schemas.file import FileDetail, FileRecord, FilesResponse
 from server.services.file_extract import FileExtractError, extract_text_async
 
-
 router = APIRouter(prefix="/api/files", tags=["files"])
 
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
@@ -28,7 +27,7 @@ def get_files() -> FilesResponse:
 
 
 @router.post("", response_model=FileRecord)
-async def upload_file(file: UploadFile = File(...)) -> FileRecord:
+async def upload_file(file: UploadFile) -> FileRecord:
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="文件内容为空")

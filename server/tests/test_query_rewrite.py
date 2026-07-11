@@ -7,7 +7,6 @@ import pytest
 import server.services.query_rewrite as qr
 from server.schemas.config import ProviderConfig
 
-
 SINGLE_TURN = [{"role": "user", "content": "FastAPI 服务的默认端口是多少？"}]
 
 MULTI_TURN = [

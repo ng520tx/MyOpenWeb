@@ -5,7 +5,6 @@ from fastapi import APIRouter, Response, status
 from server.repositories.chats import delete_chat, list_chats, upsert_chat
 from server.schemas.chat import Conversation, ConversationsResponse
 
-
 router = APIRouter(prefix="/api/chats", tags=["chats"])
 
 

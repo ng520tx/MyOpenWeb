@@ -27,7 +27,6 @@ from server.schemas.knowledge import (
 )
 from server.services.rag import index_knowledge, query_knowledge
 
-
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 
 

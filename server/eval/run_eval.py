@@ -38,7 +38,6 @@ from server.schemas.config import ProviderConfig  # noqa: E402
 from server.services.rag import index_knowledge, query_knowledge  # noqa: E402
 from server.services.rerank import rerank_available  # noqa: E402
 
-
 EVAL_TOP_K = 8
 HIT_LEVELS = (1, 4, 8)
 

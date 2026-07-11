@@ -5,7 +5,6 @@ from fastapi import APIRouter, HTTPException
 from server.repositories.memories import create_memory, delete_memory, list_memories, update_memory
 from server.schemas.memory import MemoriesResponse, Memory, MemoryCreate, MemoryUpdate
 
-
 router = APIRouter(prefix="/api/memories", tags=["memories"])
 
 

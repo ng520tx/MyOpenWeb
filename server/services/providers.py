@@ -12,7 +12,6 @@ from fastapi.responses import StreamingResponse
 
 from server.schemas.config import ProviderConfig, ProviderVerifyResult
 
-
 TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 # Non-stream chat (agent decisions, tool summaries) can take minutes on a cold
 # local model: Ollama first loads weights, then generates the full answer in
@@ -56,7 +55,7 @@ def _is_wsl() -> bool:
     if os.environ.get("WSL_DISTRO_NAME"):
         return True
     try:
-        with open("/proc/version", "r", encoding="utf-8") as handle:
+        with open("/proc/version", encoding="utf-8") as handle:
             version = handle.read().lower()
             return "microsoft" in version or "wsl" in version
     except OSError:
@@ -133,7 +132,7 @@ def _format_sse_chunk(
     }
     if usage:
         payload["usage"] = usage
-    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
 
 
 def _ollama_usage(parsed: dict) -> dict | None:
@@ -360,13 +359,15 @@ async def create_chat_completion(config: ProviderConfig, payload: dict):
                 url = f"{ollama_native_url}/api/chat" if use_ollama_native else f"{openai_base_url}/chat/completions"
                 body = _build_ollama_body(payload) if use_ollama_native else _build_openai_body(candidate, payload)
                 try:
-                    async with httpx.AsyncClient(timeout=None) as client:
-                        async with client.stream("POST", url, headers=headers, json=body) as response:
-                            response.raise_for_status()
-                            stream = _stream_ollama_response(response) if use_ollama_native else _stream_openai_response(response)
-                            async for chunk in stream:
-                                yield chunk
-                            return
+                    async with (
+                        httpx.AsyncClient(timeout=None) as client,
+                        client.stream("POST", url, headers=headers, json=body) as response,
+                    ):
+                        response.raise_for_status()
+                        stream = _stream_ollama_response(response) if use_ollama_native else _stream_openai_response(response)
+                        async for chunk in stream:
+                            yield chunk
+                        return
                 except httpx.RequestError as exc:
                     last_error = exc
                     continue

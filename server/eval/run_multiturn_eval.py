@@ -35,7 +35,6 @@ from server.schemas.config import ProviderConfig  # noqa: E402
 from server.services.query_rewrite import rewrite_query  # noqa: E402
 from server.services.rag import index_knowledge, query_knowledge  # noqa: E402
 
-
 EVAL_TOP_K = 8
 HIT_LEVELS = (1, 4, 8)
 DEFAULT_DOCS = "examples/ops-manual.md,examples/api-reference.md,examples/faq-onboarding.md"

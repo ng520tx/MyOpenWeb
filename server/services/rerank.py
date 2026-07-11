@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Optional cross-encoder rerank stage (bge-reranker family).
 
 The heavy dependencies (sentence-transformers + torch) are imported lazily and
@@ -12,11 +10,11 @@ Install (separate from the base requirements to keep the backend light):
     pip install sentence-transformers
 Domestic mirror for the model download: set HF_ENDPOINT=https://hf-mirror.com
 """
+from __future__ import annotations
 
 import asyncio
 import logging
 from typing import Any
-
 
 logger = logging.getLogger(__name__)
 

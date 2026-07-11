@@ -83,7 +83,7 @@ async def search_web(
             "error": "联网搜索依赖未安装（pip install ddgs），请告知用户联网搜索暂不可用",
             "results": [],
         }
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {"error": "联网搜索超时，请告知用户稍后再试或改用知识库", "results": []}
     except Exception as exc:  # noqa: BLE001 - tool must never break the agent loop
         logger.warning("web search failed: %s", exc)

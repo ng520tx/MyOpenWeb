@@ -4,7 +4,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 ProviderType = Literal["ollama", "openai"]
 OcrMode = Literal["auto", "always"]
 RetrievalMode = Literal["vector", "hybrid"]

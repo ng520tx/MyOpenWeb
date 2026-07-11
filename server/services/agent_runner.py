@@ -21,7 +21,6 @@ from server.services.providers import create_chat_completion_full
 from server.services.rag import query_knowledge, serialize_sources
 from server.services.web_search import WEB_SEARCH_TOOL_NAME, search_web, web_search_tool
 
-
 AGENT_INSTRUCTION = """你是 MyOpenWeb 的 Agent v1。
 你可以使用后端提供的安全工具，但不能编造工具结果。
 
@@ -526,7 +525,7 @@ def _summarize_tool_output(output: Any, limit: int = 160) -> str:
 
 
 def _sse_frame(payload: dict[str, Any]) -> bytes:
-    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
 
 
 async def _stream_agent_sse(config: ProviderConfig, payload: dict) -> AsyncIterator[bytes]:

@@ -32,7 +32,9 @@ export default function SettingsDrawer() {
     void (async () => {
       setLoadingModels(true);
       try {
-        await syncProviderConfig(settings);
+        // Read from the store: only the provider fields in the dep array
+        // should retrigger this sync, not every settings keystroke.
+        await syncProviderConfig(useAppStore.getState().settings);
         const list = await fetchModels();
         if (!cancelled) {
           setModels(list);

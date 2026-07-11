@@ -15,7 +15,6 @@ from server.repositories.knowledge import (
 from server.schemas.config import ProviderConfig
 from server.services.tokenize import build_match_query, tokenize_for_bm25
 
-
 DOCS = [
     "数据库连接池耗尽时，先执行 SHOW PROCESSLIST 检查 MySQL 慢查询。",
     "Redis 内存占用过高时，用 redis-cli --bigkeys 定位大 key。",

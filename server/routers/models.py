@@ -5,7 +5,6 @@ from fastapi import APIRouter
 from server.repositories.configs import get_provider_config
 from server.services.providers import fetch_models
 
-
 router = APIRouter(prefix="/api", tags=["models"])
 
 

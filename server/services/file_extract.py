@@ -7,7 +7,6 @@ from pathlib import Path
 from server.schemas.config import ProviderConfig
 from server.services.ocr_client import OcrError, is_image, parse_document
 
-
 logger = logging.getLogger(__name__)
 
 # A text-layer PDF shorter than this is treated as scanned (OCR candidate).

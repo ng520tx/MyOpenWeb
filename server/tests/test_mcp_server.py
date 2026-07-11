@@ -25,7 +25,7 @@ EXPECTED_TOOLS = {
 async def test_all_tools_registered() -> None:
     tools = await mcp.list_tools()
     names = {tool.name for tool in tools}
-    assert EXPECTED_TOOLS <= names
+    assert names >= EXPECTED_TOOLS
 
 
 def test_resolve_knowledge_by_name_and_id() -> None:

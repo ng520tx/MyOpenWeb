@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Lightweight tokenization for BM25 full-text search over mixed CJK/Latin text.
 
 SQLite FTS5's built-in unicode61 tokenizer treats a whole run of CJK characters
@@ -8,9 +6,9 @@ a segmenter dependency (jieba), we approximate segmentation with character
 bigrams for CJK runs and lowercase words for Latin/digit runs. Both indexed
 chunks and queries go through the same function, so matching stays consistent.
 """
+from __future__ import annotations
 
 import re
-
 
 _LATIN_WORD_RE = re.compile(r"[A-Za-z0-9_\.\-/]+")
 

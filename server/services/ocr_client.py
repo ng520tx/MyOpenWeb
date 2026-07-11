@@ -9,7 +9,6 @@ import httpx
 from server.schemas.config import ProviderConfig
 from server.services.providers import _get_wsl_host_gateway, _is_wsl, _replace_host
 
-
 # PDF/image parsing on CPU can be slow, so allow a long read window.
 OCR_TIMEOUT = httpx.Timeout(600.0, connect=10.0)
 

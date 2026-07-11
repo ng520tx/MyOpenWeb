@@ -6,28 +6,7 @@ import KnowledgeDrawer from '@/components/knowledge/KnowledgeDrawer';
 import { useAppStore } from '@/stores';
 import { fetchProviderConfig } from '@/apis/config';
 import { fetchChats, saveChat } from '@/apis/chats';
-import type { Conversation } from '@/types';
-
-function mergeConversations(localConversations: Conversation[], remoteConversations: Conversation[]) {
-  const remoteById = new Map(remoteConversations.map((conversation) => [conversation.id, conversation]));
-  const merged: Conversation[] = [];
-  const uploads: Conversation[] = [];
-
-  for (const localConversation of localConversations) {
-    const remoteConversation = remoteById.get(localConversation.id);
-    if (!remoteConversation || localConversation.updatedAt >= remoteConversation.updatedAt) {
-      merged.push(localConversation);
-      uploads.push(localConversation);
-    } else {
-      merged.push(remoteConversation);
-    }
-    remoteById.delete(localConversation.id);
-  }
-
-  merged.push(...remoteById.values());
-  merged.sort((a, b) => b.updatedAt - a.updatedAt);
-  return { merged, uploads };
-}
+import { mergeConversations } from '@/utils/conversations';
 
 export default function App() {
   useEffect(() => {
