@@ -33,7 +33,7 @@
       <p>LLM 只会生成文本，它<b>不能</b>查数据库、算数学、发请求。Agent 的思路：让模型生成「我想调用什么工具」的<b>声明</b>，由你的代码真正执行，把结果喂回去，模型再决定下一步。画成伪代码：</p>
       <pre data-lang="python" data-path="Agent 的本质（伪代码）">
 messages = [用户问题]
-for round in range(3):                    # 硬上限，防失控
+for round in range(max_rounds):           # 硬上限，防失控（可配置，默认 3）
     decision = llm(system_prompt + messages)   # 问模型：下一步？
     if decision.action == "final":
         return decision.answer            # 出口①：模型说答完了
@@ -93,7 +93,8 @@ AGENT_INSTRUCTION = """你是 MyOpenWeb 的 Agent v1。
       <h2 class="sec-t"><span class="no">SECTION 5.4</span>读代码：run_agent_events 主循环</h2>
       <p>核心函数是个 <b>async 生成器</b>（第 1、2 章的 yield 第三次登场）：一边跑循环一边 <code>yield ("event", ...)</code> 直播进度，最后 <code>yield ("result", ...)</code> 收尾。流式和非流式入口共用它——非流式把事件全部抽干只留 result，流式把事件翻译成 SSE 帧。<b>一份状态机，两种消费方式</b>。</p>
       <pre data-lang="python" data-path="server/services/agent_runner.py · run_agent_events（真实代码，骨架）">
-for round_index in range(3):                       # ① 硬上限 3 轮
+max_rounds = max(1, min(int(config.agent_max_rounds or 3), 10))
+for round_index in range(max_rounds):              # ① 硬上限（设置页可调1-10，默认3）
     yield ("event", {"type": "thinking", "round": round_index + 1})
 
     completion = await create_chat_completion_full(config, request_payload)
@@ -135,7 +136,7 @@ for round_index in range(3):                       # ① 硬上限 3 轮
 
 final_answer = "Agent 工具调用超过最大步数，已停止。..."   # 出口②：兜底</pre>
       <div class="code-notes"><ul>
-        <li><b>① 硬上限</b>：和第 4 章 Grader 的「最多补检一次」同一哲学——LLM 驱动的循环必须有确定性出口，否则延迟、成本、行为都不可控。</li>
+        <li><b>① 硬上限</b>：和第 4 章 Grader 的「最多补检一次」同一哲学——LLM 驱动的循环必须有确定性出口，否则延迟、成本、行为都不可控。上限做成配置（<code>agent_max_rounds</code>，默认 3、clamp 1-10）而非写死：场景不同忍耐度不同，但「有上限」这件事不可配置。</li>
         <li><b>③ 全程落库</b>：每个决策/工具调用/结果都写进 <code>agent_runs</code> / <code>agent_steps</code> 表，包括模型的原始输出 raw。线上「Agent 抽风了」的问题，翻表就能复盘每一步——这是第 7 章可观测性的数据地基。</li>
         <li><b>⑤ 错误回填</b>：工具抛错不终止循环，而是把 <code>{"error": ...}</code> 作为结果喂回去。模型看到「除数为零」经常能自己改参数重试——错误信息本身就是给模型的反馈信号。注意 except 列表是<b>具体异常</b>而不是裸 <code>except Exception</code>：意料中的失败（表达式非法）温柔处理，意料外的 bug 该炸就炸。</li>
       </ul></div>
@@ -232,7 +233,7 @@ sqlite3 server/data/myopenweb.db \
         <details class="iv-card">
           <summary><span class="q-no">Q1</span>用你自己的话说：什么是 Agent？<span class="chev">▸</span></summary>
           <div class="a">
-            <p>「LLM 在一个有界循环里反复做结构化决策：每轮模型输出『调用某个工具』或『给出最终答案』，工具由后端按白名单执行，结果回填对话进入下一轮。三个工程关键词：<b>有界</b>（我的实现最多 3 轮，超限兜底退出）、<b>白名单</b>（模型只能声明调用，执行权在我手里）、<b>回填</b>(工具结果和错误都进上下文，模型据此自我修正)。它不是自主意识，是一个由 LLM 当决策器的状态机。」</p>
+            <p>「LLM 在一个有界循环里反复做结构化决策：每轮模型输出『调用某个工具』或『给出最终答案』，工具由后端按白名单执行，结果回填对话进入下一轮。三个工程关键词：<b>有界</b>（我的实现轮数上限可配置、默认 3，超限兜底退出）、<b>白名单</b>（模型只能声明调用，执行权在我手里）、<b>回填</b>(工具结果和错误都进上下文，模型据此自我修正)。它不是自主意识，是一个由 LLM 当决策器的状态机。」</p>
           </div>
         </details>
 
@@ -246,7 +247,7 @@ sqlite3 server/data/myopenweb.db \
         <details class="iv-card">
           <summary><span class="q-no">Q3</span>Agent 的安全风险有哪些？你怎么防？<span class="chev">▸</span></summary>
           <div class="a">
-            <p>「把模型输出当作<b>不可信用户输入</b>，是一切的出发点。我的分层防御：<b>执行层</b>——工具白名单分发，未注册的名字直接 ToolError；calculator 用 ast.parse 解析成语法树后手写遍历器求值，只认数字和七种运算符，函数调用/属性访问默认拒绝，外加 120 字符长度限制防算力炸弹；<b>循环层</b>——3 轮硬上限防失控；<b>审计层</b>——每一步含模型原始输出全部落库，可复盘。没做但知道要做的：工具级权限分级（读/写分离）、web_search 结果的注入防护（外部网页内容可能包含针对模型的指令）。」</p>
+            <p>「把模型输出当作<b>不可信用户输入</b>，是一切的出发点。我的分层防御：<b>执行层</b>——工具白名单分发，未注册的名字直接 ToolError；calculator 用 ast.parse 解析成语法树后手写遍历器求值，只认数字和七种运算符，函数调用/属性访问默认拒绝，外加 120 字符长度限制防算力炸弹；<b>循环层</b>——轮数硬上限防失控（可配置但 clamp 在 1-10，『有上限』本身不可关闭）；<b>审计层</b>——每一步含模型原始输出全部落库，可复盘。没做但知道要做的：工具级权限分级（读/写分离）、web_search 结果的注入防护（外部网页内容可能包含针对模型的指令）。」</p>
             <p class="followup">追问预判：「为什么不用 eval + 正则过滤危险词？」→ 答：黑名单永远列不全（编码绕过、字符串拼接）；白名单 + 默认拒绝才是正解。</p>
           </div>
         </details>
@@ -273,9 +274,9 @@ sqlite3 server/data/myopenweb.db \
         </details>
 
         <details class="iv-card">
-          <summary><span class="q-no">Q7</span>为什么上限是 3 轮？复杂任务 3 轮不够怎么办？<span class="chev">▸</span></summary>
+          <summary><span class="q-no">Q7</span>为什么默认上限是 3 轮？复杂任务 3 轮不够怎么办？<span class="chev">▸</span></summary>
           <div class="a">
-            <p>「3 是针对我的场景（运维问答 + 轻量工具）压出来的经验值：本地小模型一轮 5–15 秒，3 轮已是用户忍耐上限；观测数据里 90% 的任务 1–2 轮完成，3 轮跑满通常意味着模型在打转而不是在进步。复杂任务的正确解法不是加圈数，是<b>换编排结构</b>：任务分解成子任务分别跑短循环（plan-and-execute 模式），或引入 LangGraph 这类显式状态机做多节点流程——这是我 roadmap 里已经做了原型的方向。」</p>
+            <p>「3 是针对我的场景（运维问答 + 轻量工具）压出来的经验值：本地小模型一轮 5–15 秒，3 轮已是用户忍耐上限；观测数据里 90% 的任务 1–2 轮完成，3 轮跑满通常意味着模型在打转而不是在进步。所以我把它做成配置（设置页 1-10 可调、后端 clamp），但『有上限』这件事不开放关闭。复杂任务的正确解法不是无脑加圈数，是<b>换编排结构</b>：任务分解成子任务分别跑短循环（plan-and-execute 模式），或引入 LangGraph 这类显式状态机做多节点流程——这是我 roadmap 里已经做了原型的方向。」</p>
           </div>
         </details>
       </div>

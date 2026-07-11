@@ -99,7 +99,8 @@ flowchart TD
 → 取出每个文件的 text_content
 → rag.split_text() 按字符 + 自然边界 + overlap 切片
 → embeddings.embed_texts() 分批向量化（默认 16/批）
-→ replace_chunks() 原子替换该知识库的全部 chunks
+→ VectorStore.replace_chunks() 原子替换该知识库的全部 chunks
+   （后端由 MYOPENWEB_VECTOR_BACKEND 决定：sqlite 默认 / pgvector）
 → 返回 {files, chunks, embedding_model}
 ```
 
@@ -112,8 +113,10 @@ flowchart TD
    用最近 3 轮历史把"它的端口是多少"这类省略主语的追问改写成自包含查询
    （一次 temperature=0 的小请求；失败/超长/空输出自动回退原文）
 → query_knowledge()：
-   1) 向量化 query，numpy 余弦得到向量排名
-   2) hybrid 模式再取 BM25（FTS5）排名，RRF 融合
+   1) 向量化 query，VectorStore.query_by_vector() 取向量排名
+      （SQLite：numpy 内存余弦 + 矩阵缓存；pgvector：ORDER BY embedding <=> q）
+   2) hybrid 模式再取 VectorStore.query_by_keywords() 关键词排名
+      （SQLite：FTS5 BM25；pgvector：tsvector + ts_rank），RRF 融合
    3) 开启 rerank 时对候选池做 cross-encoder 重排（失败自动回退）
 → 开启检索自纠错（agentic retrieval）时：
    retrieval_grader.grade_retrieval() 一次 temperature=0 小请求判断候选片段
@@ -122,6 +125,9 @@ flowchart TD
    略放大的预算）；Grader 失败/脏输出/复读原查询 → 自动沿用首轮结果
 → 命中：拼"带 [序号] 来源标注的参考资料"system_prompt + 返回 sources
 → 未命中：注入拒答提示
+→ 检索链路异常（embedding 服务/向量后端不可达）：不再 502——
+   降级为不带知识库的普通回答，并 emit {"retrieval_warning": "..."} 帧，
+   前端在气泡顶部显示黄色警示"知识库检索失败，本次回答未使用知识库"
 → 流式响应前先 emit 一条 {"sources":[...]} SSE，前端展示"引用来源"
 ```
 
@@ -229,7 +235,7 @@ Agent 模式 + knowledge_id → agent_runner
 - **中文 BM25 怎么处理分词？**：SQLite FTS5 的 unicode61 会把整段中文当一个 token。自研轻量分词（CJK 字符二元组 + 英文小写词），索引与查询同一分词器，零依赖；规模大再换 jieba。
 - **Rerank 为什么有用？代价是什么？**：召回阶段（双塔/BM25）是"各自编码再比较"，rerank 用 cross-encoder 对"问题-片段"拼接后整体打分，捕捉细粒度交互，所以首位命中显著提升（实测 Hit@1 0.93→1.00）。代价是每个候选都要过一遍模型，CPU 上单次检索到 5s 量级，因此做成可开关 + 失败自动回退，在线低延迟场景建议 GPU/ONNX/缩小候选池。
 - **检索质量怎么评的？**：自建 40 条 QA 评测集（三份企业文档语料），指标 Hit@1/4/8 与 MRR，另测端到端检索延迟（含查询向量化）；跑 chunk_size × 检索模式 × rerank 全参数对照，报告落盘可复现（`server/eval/`）。
-- **为什么不用向量数据库 / Dify？**：个人/演示规模 SQLite + 内存余弦足够，且能讲清每一步；强调"自己写的"比"拖流程"更有说服力。架构上预留了 PostgreSQL + pgvector 与 Dify provider 扩展点，规模上来按接口替换实现即可。
+- **为什么不用向量数据库 / Dify？**：个人/演示规模 SQLite + 内存余弦足够，且能讲清每一步；强调"自己写的"比"拖流程"更有说服力。向量存储已抽象为 `VectorStore` 接口并落地了 PostgreSQL + pgvector 第二实现（一个环境变量切换，双后端同一套契约测试），演示"规模上来按接口替换"不是口头预案而是已验证的路径；Dify provider 仍是预留扩展点。
 - **怎么防幻觉 / 保证可信？**：强约束 system_prompt（只用参考资料、未命中明确说不知道）、返回引用来源给前端展示、embedding 维度不匹配时拒绝用旧索引并提示重建。
 - **Agent 和普通 RAG 的区别？**：普通 RAG 是后端确定性检索后注入 system_prompt（结果稳定、好复现）；Agent 把检索做成 `search_knowledge` 工具，由模型自主决定是否检索、检索什么，并记录工具调用日志，更接近"智能体"。两种路径按场景选用。
 - **prompt-based 和原生 function calling 的区别？**（两种都实现了，可切换）：prompt 协议把工具说明写进系统提示词、约定 JSON 输出，兼容任何模型，但要自己做解析与容错（小模型经常输出 `{"action":"calculator",...}` 这类脏格式）；native 协议把 tools schema 直接传给模型端接口，返回结构化 `tool_calls`、按 `role=tool` 回填，格式稳定、少烧协议 token，但要求模型支持（qwen2.5 支持，很多小模型不支持）。生产上建议：模型可控时优先 native，兜底 prompt。
@@ -398,8 +404,17 @@ Cursor 配置（项目内 `.cursor/mcp.json` 已就绪，Windows 宿主 + WSL ve
 
 面试话术：这是 LLMOps 的最小可用闭环——先让每一次调用的 token 成本可见、可落库、可按 run 回放，扩展方向才是按用户/按模型聚合报表与限额。
 
-## 13. 后续扩展预案（仅方案，未实现）
+## 13. 向量后端切换（pgvector，已实现）
 
-- **PostgreSQL + pgvector 迁移**：把 `chunks.embedding` 改为 `vector` 列，检索改为 SQL `ORDER BY embedding <=> :q LIMIT k`；`repositories` 层接口不变，替换实现即可，便于写"企业级"简历。
-- **按文件增量索引**：当前为知识库整体重建，规模大后改为按文件维度增量更新 chunks 与 FTS。
+检索链路只依赖 `server/vectorstores/base.py` 的 `VectorStore` 协议（chunk 持久化 + `query_by_vector` / `query_by_keywords` 两个排序原语），RRF 融合、rerank、query rewrite、Grader 全部后端无关。
+
+- **默认 SQLite**（`sqlite_store.py`）：JSON 向量 + numpy 内存余弦（进程内矩阵缓存、版本戳失效）+ FTS5 BM25，零额外服务。
+- **pgvector**（`pgvector_store.py`）：`vector` 列 + `ORDER BY embedding <=> %s::vector` 余弦（`dim` 列过滤维度不一致），关键词检索用生成列 `tokens_tsv tsvector` + GIN 索引 + `ts_rank`，分词沿用自研 CJK 二元组（索引/查询同源）。
+- **切换方式**：`MYOPENWEB_VECTOR_BACKEND=pgvector` + `MYOPENWEB_PG_DSN=postgresql://...`（Docker：`MYOPENWEB_VECTOR_BACKEND=pgvector docker compose --profile pgvector up -d`）。业务表仍留 SQLite，只有向量数据换库；切换后需在知识库页重建索引。
+- **质量保障**：`server/tests/test_vectorstore_contract.py` 同一套契约测试参数化跑双后端（向量排名 / 关键词命中 / 维度守卫 / 删除作用域 / 全量替换语义）；CI 的 backend job 起 `pgvector/pgvector:pg16` 服务容器真实执行 PG 侧用例，本地无 PG 时自动 skip。
+- **规模再往上**：pinning 向量维度后加 HNSW 索引（当前精确扫描在十万级以内够用）；亿级再评估专用向量库。
+
+## 14. 后续扩展预案（仅方案，未实现）
+
+- **按文件增量索引**：当前为知识库整体重建，规模大后改为按文件维度增量更新 chunks 与关键词索引。
 - **Dify 作为可选编排 provider**：把 Dify 作为一种 provider 接入，复杂工作流交给 Dify，简单场景仍走自研链路。

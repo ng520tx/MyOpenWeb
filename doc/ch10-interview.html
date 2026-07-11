@@ -42,7 +42,7 @@
         <li><b>背景动机（30 秒）</b>：「起点是我在企业内网环境里的真实痛点：敏感文档不能上云端大模型，通用助手也不懂我们的运维手册。所以从第一天就是奔着私有化和白盒可控去设计的。」<span class="muted">（钩子：私有化约束 → 引向架构选型话题）</span></li>
         <li><b>最难的问题（90 秒）</b>：「最有挑战的是检索质量的迭代闭环。我先建了 40 题评测集拿到基线，发现纯向量对错误码这类精确术语命中很差，上了 BM25 混合检索提了 11 个点；又发现困难改述类查询首轮容易检偏，实现了 CRAG 式的自纠错——小模型给检索结果打分，不足就改写补检一次，有界不失控。每一步都是评测数据驱动的，不是拍脑袋堆特性。」<span class="muted">（钩子：评测方法论 → 你第 7 章的主场）</span></li>
         <li><b>工程亮点（90 秒）</b>：「工程上我最在意两件事。一是可观测：Agent 每轮决策原文、工具结果、token 用量全部落库，线上问题翻表复盘；二是优雅降级：rerank 权重缺失、FTS5 不可用、模型输出解析失败，每个增强层都能独立降级，核心问答链路在任何单点故障下可用。测试上确定性逻辑全覆盖，LLM 边界 mock 成剧本回放，CI 里跑全绿。」<span class="muted">（钩子：降级设计 → 第 8 章的表格）</span></li>
-        <li><b>反思与下一步（30 秒）</b>：「已经想清楚的演进：多租户要加 chunk 级权限，规模上去迁 pgvector，综合类查询上 GraphRAG 路由分流。自研让我懂了原理，生产协作我会拥抱 LangGraph——概念是一一对应的。」<span class="muted">（钩子：技术视野 → 第 9 章的生态地图）</span></li>
+        <li><b>反思与下一步（30 秒）</b>：「向量后端我已经抽象出接口并落地了 pgvector 可切换实现（契约测试在 CI 跑真 PG）；接下来的演进：多租户加 chunk 级权限、pgvector 上 HNSW 做十万级压测、综合类查询上 GraphRAG 路由分流。自研让我懂了原理，生产协作我会拥抱 LangGraph——概念是一一对应的。」<span class="muted">（钩子：技术视野 → 第 9 章的生态地图）</span></li>
       </ul>
 
       <h2 class="sec-t"><span class="no">SECTION 10.2</span>「为什么不用 LangChain」追问链三连</h2>
@@ -123,7 +123,7 @@
         <details class="iv-card">
           <summary><span class="q-no">S7</span>你的项目是单用户的，改造成 500 人的企业服务要动哪些地方？<span class="chev">▸</span></summary>
           <div class="a">
-            <p>「五个改造点按优先级：①<b>认证授权</b>——FastAPI 加 JWT 中间件（Depends 全局注入，router 薄壳设计让这是纯增量）；②<b>数据隔离</b>——chats/memories/knowledge 表加 user_id/org_id 维度，检索时 chunk 级 ACL 过滤；③<b>存储升级</b>——SQLite 换 PostgreSQL + pgvector（repositories 层隔离了全部 SQL，受控改动）；④<b>模型服务池化</b>——Ollama 单机换 vLLM 集群，providers 层改个 base_url；⑤<b>可观测升级</b>——自研两张表换 Langfuse，加告警。整体架构不用推翻，因为分层时就把这些接缝留好了——这是我最想传达的：单机 demo 和企业服务之间隔的是迭代，不是重写。」</p>
+            <p>「五个改造点按优先级：①<b>认证授权</b>——FastAPI 加 JWT 中间件（Depends 全局注入，router 薄壳设计让这是纯增量）；②<b>数据隔离</b>——chats/memories/knowledge 表加 user_id/org_id 维度，检索时 chunk 级 ACL 过滤；③<b>存储升级</b>——向量侧已经落地：VectorStore 抽象下 pgvector 一个环境变量切换（契约测试双后端验证）；业务表换 PostgreSQL 也只动 repositories 层；④<b>模型服务池化</b>——Ollama 单机换 vLLM 集群，providers 层改个 base_url；⑤<b>可观测升级</b>——自研两张表换 Langfuse，加告警。整体架构不用推翻，因为分层时就把这些接缝留好了——这是我最想传达的：单机 demo 和企业服务之间隔的是迭代，不是重写，而且第③步我已经用代码证明过一次。」</p>
           </div>
         </details>
 

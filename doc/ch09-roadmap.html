@@ -70,7 +70,7 @@
         <tr><th>方向</th><th>解决什么</th><th>2026 状态</th><th>落到你项目</th></tr>
         <tr><td class="y">GraphRAG</td><td>跨文档综合题（「总结这 200 份合同的共同风险」）——单片检索天然答不了</td><td>微软开源实现成熟；生产模式是<b>路由分流</b>：小分类器把「点查题」发向量 RAG、「综合题」发图 RAG</td><td>从运维文档抽取实体关系（服务→依赖→告警）建轻量图，先做「服务依赖问答」一个场景</td></tr>
         <tr><td>多模态 RAG</td><td>图表/截图/表格里的信息检索（运维场景大量架构图、监控截图）</td><td>早期生产，多模态 embedding（联合编码文本+图像）快速成熟中</td><td>你已有 OCR 链路，下一步是图片直接进向量索引</td></tr>
-        <tr><td>pgvector 迁移</td><td>十万级以上语料的检索性能 + SQL 生态统一</td><td>HNSW 索引成熟，PostgreSQL 生态事实标准</td><td>repositories 层已隔离 SQL，迁移是受控改动（第 8 章 Q5 的演进路径）</td></tr>
+        <tr><td>pgvector 深化</td><td>十万级以上语料的检索性能 + SQL 生态统一</td><td>HNSW 索引成熟，PostgreSQL 生态事实标准</td><td class="y">可切换后端已落地（VectorStore 抽象 + 契约测试）；下一步：钉死向量维度上 HNSW 索引 + 十万级压测</td></tr>
       </table>
       <p>评测生态同样值得跟进：<b>RAGAS</b>（你自研 judge 对齐的就是它的指标体系）、TruLens、Opik——你的路线是「原理已自研验证 → 生产直接上框架」，和 Agent 框架同一个故事。</p>
 
@@ -83,6 +83,7 @@
         <tr><td>评测纪律（离线回归）</td><td>RAGAS 类框架 + 数据集版本化</td><td class="y">✓ 自研实现（方法论等价，工具可升级）</td></tr>
         <tr><td>tracing / usage 观测</td><td>LangSmith / Langfuse 级</td><td class="y">✓ 最小自研（两张表 + usage 链路）</td></tr>
         <tr><td>MCP 工具服务</td><td>新兴标配</td><td class="y">✓ 已实现（stdio，可升 HTTP）</td></tr>
+        <tr><td>向量库可替换（pgvector 级）</td><td>规模化前置条件</td><td class="y">✓ 已实现（VectorStore 抽象 + 双后端契约测试，CI 跑真 PG）</td></tr>
         <tr><td>chunk 级权限控制</td><td>企业刚需（多租户）</td><td>✗ 单用户场景未做——知道怎么做（chunk 表加 ACL 维度 + 检索时过滤）</td></tr>
         <tr><td>GraphRAG 路由</td><td>综合类查询的解法</td><td>✗ 候选迭代方向（9.3 的方案）</td></tr>
         <tr><td>安全（prompt 注入 / OWASP LLM Top 10）</td><td>生产门禁</td><td>△ 工具白名单已做；外部内容注入防护在 roadmap</td></tr>
@@ -117,7 +118,7 @@
       <table class="cmp-table">
         <tr><th>时段</th><th>主线（每周 5–8 小时）</th><th>产出物（挂在简历上的）</th></tr>
         <tr><td class="y">0–3 个月<br>求职冲刺期</td><td>① 本教材过两遍，所有动手实验跑通；② 第 10 章话术练到脱口而出；③ LangChain Academy 的 LangGraph 入门课 + 把项目里那个 LangGraph example 扩成三节点工作流；④ 每周 2 次模拟面试自答（对着第 10 章题库录音回听）</td><td>面试就绪状态；LangGraph 迁移 demo；GitHub 全绿的仓库</td></tr>
-        <tr><td>3–6 个月<br>上岗补强期</td><td>① pgvector 迁移落地（十万级语料压测）；② chunk 级 ACL（多租户改造）；③ 评测切换 RAGAS + Langfuse 上 tracing（自研换生产件）；④ OWASP LLM Top 10 逐项过一遍自己的系统</td><td>「单机 demo → 生产架构」的迁移故事；安全审计清单</td></tr>
+        <tr><td>3–6 个月<br>上岗补强期</td><td>① pgvector 深化（HNSW 索引 + 十万级语料压测，后端切换已落地）；② chunk 级 ACL（多租户改造）；③ 评测切换 RAGAS + Langfuse 上 tracing（自研换生产件）；④ OWASP LLM Top 10 逐项过一遍自己的系统</td><td>「单机 demo → 生产架构」的迁移故事；安全审计清单</td></tr>
         <tr><td>6–12 个月<br>建立差异期</td><td>① GraphRAG 路由分流场景落地（服务依赖问答）；② 多模态检索（架构图/截图入索引）；③ 在公司内推动一个 AI 提效项目从 0 到上线（把个人项目经验变成团队交付）；④ 输出 2–3 篇深度技术文章（评测方法论/降级设计）</td><td>团队级 AI 项目 owner 经历；技术影响力素材</td></tr>
       </table>
       <div class="pitfall">

@@ -250,15 +250,22 @@ App 启动
 - `services/embeddings.py`
   - 批量向量化，复用 `providers.py` 的 URL 解析与 WSL 回退
 - `services/rag.py`
-  - 切片（按字符 + 自然边界 + overlap）、批量入库、查询时 numpy 余弦 topK
+  - 切片（按字符 + 自然边界 + overlap）、批量向量化后写入 `VectorStore`
+  - 检索：向量 top-k + 关键词 top-k 由所选后端提供，本层做 RRF 融合 / rerank / 自纠错
   - 维度不匹配（换了 embedding 模型）时返回空并提示重建索引
-  - 聊天融合：拼接带来源标注的参考资料 system_prompt，未命中时走拒答提示
+  - 聊天融合：拼接带来源标注的参考资料 system_prompt，未命中时走拒答提示；检索链路异常时由 `chat_proxy` 降级为普通回答并带 `retrieval_warning`
+- `vectorstores/`（向量存储抽象层）
+  - `base.py`：`VectorStore` 协议（replace/count/delete + `query_by_vector` / `query_by_keywords` 两个排序原语）
+  - `sqlite_store.py`：默认实现，JSON 向量 + numpy 内存余弦（带进程内矩阵缓存与版本戳失效）+ FTS5 BM25
+  - `pgvector_store.py`：PostgreSQL + pgvector 实现，`ORDER BY embedding <=> q` 余弦 + tsvector 关键词检索
+  - `factory.py`：按 `MYOPENWEB_VECTOR_BACKEND`（sqlite 默认 / pgvector）+ `MYOPENWEB_PG_DSN` 选择实现
 - `services/agent_runner.py`
   - 要求模型输出 Open WebUI 风格的 `tool_calls` 数组
   - 兼容小模型把工具名直接写进 `action` 字段的情况
   - 根据模型决策调用白名单工具
   - 把工具结果回填给模型生成最终回答
-  - 最多执行 3 轮工具循环，避免无限调用
+  - 工具循环轮数可配置（`agent_max_rounds`，默认 3，clamp 1-10），避免无限调用
+  - 知识库检索失败时工具返回结构化错误（模型转告用户），运行不中断
   - 写入 `agent_runs` / `agent_steps`，记录模型判断、工具调用、工具结果、最终回答
   - 注入已启用 `memories` 作为长期上下文
 
@@ -463,7 +470,7 @@ App 启动
 | `embedding` | 向量（JSON 数组字符串） |
 | `created_at` | 创建时间 |
 
-设计原则：个人/演示规模直接把向量存进 SQLite，查询时用 numpy 内存余弦相似度即可；企业级再迁 PostgreSQL + pgvector。
+设计原则：chunks 归属 `VectorStore` 抽象层管理。默认 SQLite 后端把向量以 JSON 存进本表、查询用 numpy 内存余弦（进程内矩阵缓存 + 版本戳失效）；设置 `MYOPENWEB_VECTOR_BACKEND=pgvector` 后 chunks 改存 PostgreSQL（`vector` 列 + tsvector 关键词索引），业务表（chats/files/knowledge 等）仍留在 SQLite，切换后需重建索引。
 
 ## 默认配置
 
@@ -473,6 +480,8 @@ App 启动
 | API 地址 | `http://localhost:11434/v1` |
 | API Key | 空 |
 | Agent 模式 | `false` |
+| Agent 最大工具轮数 | `3`（设置页可调 1-10） |
+| 向量后端 | `sqlite`（环境变量 `MYOPENWEB_VECTOR_BACKEND` 可切 `pgvector`） |
 | 模型 | `qwen3.5:4b` |
 | System Prompt | `You are a helpful assistant.` |
 | 温度 | `0.7` |
@@ -592,8 +601,7 @@ H5: window.moaBridge.callNative(method, JSON.stringify(params))
 - 用户系统
 - 权限控制
 - 工作流 / Dify 式可视化编排
-- PostgreSQL + pgvector / Redis / 多设备同步
-- 重排序（rerank）与混合检索（BM25 + 向量）
+- Redis / 多设备同步
 - 文件级增量索引（当前为知识库整体重建）
 
 ## 后续迭代方向
@@ -601,9 +609,10 @@ H5: window.moaBridge.callNative(method, JSON.stringify(params))
 - [x] 文件内容入库或落盘，支持历史附件真正可重放
 - [x] 简单知识库：文件列表、文本抽取、按关键词/向量注入上下文
 - [x] RAG / 向量检索接入
-- [ ] 检索增强：rerank、混合检索、按文件增量索引
+- [x] 检索增强：rerank、混合检索（BM25 + 向量 RRF）
+- [x] PostgreSQL + pgvector 可切换向量后端（`server/vectorstores/` 抽象层，环境变量切换，双后端契约测试）
+- [ ] 按文件增量索引（当前为知识库整体重建）
 - [ ] 聊天消息与附件拆表，替代当前单 JSON 存储
-- [ ] SQLite 升级为 PostgreSQL + pgvector 的迁移预案（见 `docs/rag-agent-copilot.md`）
 - [ ] 模型配置中心扩展为多 provider 列表
 - [ ] 统一错误码与后端日志
 - [ ] 更好的 TTS（Edge TTS / OpenAI TTS）

@@ -448,9 +448,51 @@ netsh advfirewall firewall add rule name="Vite Dev 5173" dir=in action=allow pro
 
 ---
 
+## 知识库 / 向量后端
+
+### 25. 回答顶部出现黄色提示"知识库检索失败，本次回答未使用知识库"
+
+**现象**：选中了知识库提问，回答正常返回，但气泡顶部有黄色警示条，且没有"引用来源"
+
+**原因**：检索链路异常（最常见：embedding 模型服务不可达，如 Ollama 未启动或 `bge-m3` 未拉取；pgvector 模式下还可能是 PostgreSQL 连不上）。系统设计为检索失败时**降级为普通回答而不是报 502**，警示条括号里带具体原因
+
+**解决**：
+- 按警示条括号里的原因排查：`ollama pull bge-m3`、确认 Ollama 已启动、设置页"测试连接"
+- pgvector 模式：确认 PG 容器在跑（`docker compose ps`）、`MYOPENWEB_PG_DSN` 正确
+- 修复后重新提问即可，无需重启后端
+
+### 26. 切换 pgvector 后端后检索结果为空
+
+**现象**：设置 `MYOPENWEB_VECTOR_BACKEND=pgvector` 重启后，知识库问答全部拒答，知识库页分块数显示 0
+
+**原因**：切换后端不迁移数据——SQLite 里的旧向量不会自动搬到 PostgreSQL，chunks 需要重建
+
+**解决**：
+- 知识库页对每个库点「建立/重建索引」，向量会写入 PG
+- 切回 SQLite 同理（原 SQLite 向量还在，无需重建）
+
+### 27. pgvector 启动报错 MYOPENWEB_PG_DSN / psycopg 缺失
+
+**现象**：`RuntimeError: MYOPENWEB_VECTOR_BACKEND=pgvector 需要同时设置 MYOPENWEB_PG_DSN`，或 `pgvector 后端需要 psycopg`
+
+**解决**：
+```bash
+# 本地裸跑：装驱动 + 给 DSN
+./.venv/bin/pip install -r server/requirements-pgvector.txt
+export MYOPENWEB_VECTOR_BACKEND=pgvector
+export MYOPENWEB_PG_DSN=postgresql://myopenweb:myopenweb@localhost:5432/myopenweb
+
+# Docker：一条命令带起 PG（镜像已内置驱动与默认 DSN）
+MYOPENWEB_VECTOR_BACKEND=pgvector docker compose --profile pgvector up -d --build
+```
+
+首连自动执行 `CREATE EXTENSION vector` 并建表，要求 PG 侧安装了 pgvector 扩展（`pgvector/pgvector:pg16` 镜像自带）。
+
+---
+
 ## Git 操作
 
-### 25. PowerShell Heredoc 语法报错
+### 28. PowerShell Heredoc 语法报错
 
 **现象**：用 `<<'EOF'` 写多行 commit message 时 PowerShell 报 `ParserError`
 

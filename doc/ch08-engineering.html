@@ -205,7 +205,7 @@ docker compose down && docker compose up -d
         <details class="iv-card">
           <summary><span class="q-no">Q5</span>SQLite 用在生产靠谱吗？什么时候必须换？<span class="chev">▸</span></summary>
           <div class="a">
-            <p>「看负载形态。我的场景——内网单用户/小团队工作台，读多写少、并发个位数——SQLite 是最优解：零运维、零网络开销、备份就是拷文件，还白送 FTS5 全文检索。必须换的信号：多实例部署（SQLite 是进程内库，无法跨机共享写）、写并发上百、需要行级权限。演进路径在架构里预留了：仓储层隔离了全部 SQL，换 PostgreSQL 只动 repositories/，顺路上 pgvector 把向量检索也收进数据库。技术选型答『匹配当前约束 + 预留演进路径』永远比报菜名强。」</p>
+            <p>「看负载形态。我的场景——内网单用户/小团队工作台，读多写少、并发个位数——SQLite 是最优解：零运维、零网络开销、备份就是拷文件，还白送 FTS5 全文检索。必须换的信号：多实例部署（SQLite 是进程内库，无法跨机共享写）、写并发上百、需要行级权限。演进路径不是嘴上说说：向量这块已经通过 VectorStore 抽象落地了 pgvector 可切换后端（双后端契约测试在 CI 跑真 PG），业务表要换 PostgreSQL 时同样只动 repositories/。技术选型答『匹配当前约束 + 已验证的演进路径』永远比报菜名强。」</p>
           </div>
         </details>
       </div>

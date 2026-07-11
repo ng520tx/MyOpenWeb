@@ -273,7 +273,7 @@ python
           <summary><span class="q-no">Q3</span>解释一下你项目里 get_db() 的实现原理。<span class="chev">▸</span></summary>
           <div class="a">
             <p>「<code>@contextmanager</code> 装饰的生成器函数：<code>yield</code> 前建立 SQLite 连接（进入 with 时执行），<code>yield</code> 把连接交给业务代码，业务代码跑完回到 <code>yield</code> 之后 commit，finally 里保证 close。等价 Java 的 try-with-resources。好处是仓储层每个函数都不可能忘记释放连接。」</p>
-            <p class="followup">追问预判：「每个请求都开新连接，性能可以吗？」→ 答：SQLite 是进程内嵌入式库，"连接"只是打开文件句柄，开销微小；换 PostgreSQL 时才需要引入连接池（如 asyncpg pool），这是我 roadmap 里 pgvector 迁移的一部分。</p>
+            <p class="followup">追问预判：「每个请求都开新连接，性能可以吗？」→ 答：SQLite 是进程内嵌入式库，"连接"只是打开文件句柄，开销微小。项目里已落地的 pgvector 后端就不一样了：PG 连接是真网络连接，我用单例长连接 + 断线重连兜底，并发上来再升级 psycopg pool——同一个问题在两种存储引擎下的答案不同，这正是要理解原理的原因。</p>
           </div>
         </details>
 

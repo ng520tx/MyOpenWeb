@@ -86,7 +86,7 @@ flowchart TD
 | 层级 | 技术 |
 |------|------|
 | 前端 | React 18 + TypeScript 5 + Vite 5 + Tailwind CSS 3 + Zustand |
-| 后端 | Python 3.12 + FastAPI + SQLite（内置 sqlite3，向量存 JSON + numpy 余弦检索） |
+| 后端 | Python 3.12 + FastAPI + SQLite（内置 sqlite3）；向量后端可切换：SQLite（JSON + numpy 余弦，默认）或 PostgreSQL + pgvector |
 | 模型 | Ollama（默认 `qwen3.5:4b` 对话 / `bge-m3` 向量化）或任意 OpenAI Compatible |
 | OCR（可选） | PaddleOCR PP-StructureV3，独立 venv 独立服务，CPU 可跑 |
 | 移动端 | Kotlin + WebView（API 26+），JS 桥接原生能力 |
@@ -126,9 +126,12 @@ docker compose up -d --build
 PROVIDER_BASE_URL=http://ollama:11434/v1 docker compose --profile ollama up -d --build
 docker compose exec ollama ollama pull qwen3.5:4b
 docker compose exec ollama ollama pull bge-m3
+
+# 可选：向量后端切换为 PostgreSQL + pgvector（默认 SQLite 零服务）
+MYOPENWEB_VECTOR_BACKEND=pgvector docker compose --profile pgvector up -d --build
 ```
 
-容器内 FastAPI 直接托管构建好的 H5，打开 `http://localhost:8000` 即可使用；数据持久化在 `myopenweb-data` 卷。
+容器内 FastAPI 直接托管构建好的 H5，打开 `http://localhost:8000` 即可使用；数据持久化在 `myopenweb-data` 卷（pgvector 模式向量存 `pgvector-data` 卷，切换后需在知识库页重建索引）。
 
 ### MCP Server（在 Cursor 里直接查企业知识库）
 
@@ -193,10 +196,11 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 
 ## 核心设计与取舍
 
-- **为什么自研 RAG / Agent 而不用 LangChain、Dify**：目标是把检索与工具调用的每一步（切片策略、相似度计算、拒答规则、工具循环上限、运行日志）做成可解释、可调试的白盒；规模上来后再按接口替换为框架或向量库，`repositories` 层已预留切换点。
-- **向量为什么存 SQLite**：个人/小团队规模下，`chunks` 表存 JSON 向量 + numpy 内存余弦已足够（百级文档毫秒级响应），省去向量库部署成本，正好匹配"企业内网轻量私有化"场景；预留 PostgreSQL + pgvector 迁移方案。
+- **为什么自研 RAG / Agent 而不用 LangChain、Dify**：目标是把检索与工具调用的每一步（切片策略、相似度计算、拒答规则、工具循环上限、运行日志）做成可解释、可调试的白盒；规模上来后再按接口替换为框架或向量库，`vectorstores` 抽象层已落地切换点。
+- **向量存储可切换（SQLite 默认 / pgvector 可选）**：检索链路只依赖 `VectorStore` 接口（向量 top-k + 关键词 top-k 两个原语），RRF 融合、rerank、自纠错全部后端无关。默认 SQLite（JSON 向量 + numpy 内存余弦 + FTS5 BM25，零额外服务，百级文档毫秒级）；`MYOPENWEB_VECTOR_BACKEND=pgvector` 一个环境变量切到 PostgreSQL + pgvector（`ORDER BY embedding <=> q` 余弦 + tsvector 关键词，语料十万级的演进路径），同一套契约测试保证两个后端行为一致。
 - **中文 BM25 分词**：FTS5 的 unicode61 分词器会把整段中文当成一个 token。方案是自实现 CJK 字符二元组 + 英文小写单词的轻量分词（`services/tokenize.py`），零额外依赖即可让 BM25 在中文语料上工作，规模上来可替换 jieba。
 - **rerank 可降级**：cross-encoder 依赖（torch）单独隔离在 `server/rerank/requirements.txt`，未安装或模型加载失败时自动回退为融合排序并做负缓存，核心链路永不因 rerank 阻塞。
+- **检索失败也降级**：embedding 服务/向量后端不可达时，聊天不再返回 502——自动降级为不带知识库的直答，并通过 `retrieval_warning` 帧告知前端展示黄色警示；Agent 的 `search_knowledge` 工具同样返回结构化错误由模型转告用户，运行不中断。
 - **防幻觉**：强约束 system prompt（只依据参考资料回答）+ 引用来源展示 + 检索未命中时明确拒答 + 换 embedding 模型导致维度不一致时拒用旧索引并提示重建。
 - **可观测性**：Agent 每轮的模型判断、工具调用、工具结果、最终回答全部落库，`GET /api/agent/runs/{id}` 可回放，前端可展开。
 - **工具安全**：工具由后端白名单实现，模型只能表达"调用意图"，不能执行任意代码；计算器用表达式解析器而非 `eval`。
@@ -209,6 +213,7 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 ├── android/          # Android WebView 壳（Kotlin，STT/TTS/文件/安全区桥接）
 ├── server/           # FastAPI 后端（routers / services / repositories / schemas 分层）
 │   ├── services/     # providers / rag / embeddings / agent_runner / agent_tools / file_extract / ocr_client
+│   ├── vectorstores/ # VectorStore 抽象 + SQLite（默认）/ pgvector 双实现
 │   └── ocr/          # 可选 PaddleOCR 独立服务依赖
 ├── src/              # React H5（apis / components / stores / bridge）
 ├── scripts/          # 一键启动脚本（后端 / OCR）
@@ -246,7 +251,9 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 - [x] Agent 联网搜索工具（ddgs 免 key，可选开关 + 优雅降级）
 - [x] LLM 对话标题生成 + 追问建议 chip（异步增强）
 - [x] Token 用量统计（usage 全链路透传 + 气泡展示 + agent_runs 落库）
-- [ ] PostgreSQL + pgvector 可切换向量后端
+- [x] PostgreSQL + pgvector 可切换向量后端（VectorStore 抽象 + 双后端契约测试，CI 真实跑 PG）
+- [x] RAG 检索失败优雅降级（聊天不 502，前端黄色警示；Agent 工具返回结构化错误）
+- [x] Agent 工具循环轮数可配置（设置页 1-10，默认 3）
 
 ## License
 
