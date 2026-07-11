@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 import os
 import sqlite3
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
-
 
 ROOT_DIR = Path(__file__).resolve().parent
 # MYOPENWEB_DATA_DIR lets Docker volumes and the eval harness relocate all
@@ -23,6 +23,17 @@ def _connect() -> sqlite3.Connection:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    # SQLite ships with foreign keys OFF per connection; without this pragma
+    # every ON DELETE CASCADE in the schema is silently ignored.
+    conn.execute("PRAGMA foreign_keys = ON")
+    # Ride out short writer contention (chat saves + agent_steps + re-index
+    # can overlap) instead of failing fast with "database is locked".
+    conn.execute("PRAGMA busy_timeout = 5000")
+    # WAL lets readers proceed while a writer commits. Falls back to the
+    # default journal on filesystems without shared-memory support
+    # (e.g. WSL /mnt drvfs, some network mounts).
+    with contextlib.suppress(sqlite3.OperationalError):
+        conn.execute("PRAGMA journal_mode = WAL")
     return conn
 
 

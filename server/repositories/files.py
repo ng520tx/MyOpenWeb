@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import sqlite3
 import time
 import uuid
 from pathlib import Path
@@ -9,7 +11,6 @@ from typing import Any
 
 from server.db import DATA_DIR, get_db
 from server.schemas.file import FileDetail, FileRecord
-
 
 FILES_DIR = DATA_DIR / "files"
 PREVIEW_LENGTH = 200
@@ -139,12 +140,22 @@ def delete_file(file_id: str) -> bool:
         row = conn.execute("SELECT path FROM files WHERE id = ?", (file_id,)).fetchone()
         if not row:
             return False
+        # FTS5 virtual tables have no foreign keys, so mirror rows must be
+        # removed by hand before the chunks they point at disappear. The
+        # suppress covers SQLite builds compiled without FTS5.
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute(
+                "DELETE FROM chunks_fts WHERE chunk_id IN (SELECT id FROM chunks WHERE file_id = ?)",
+                (file_id,),
+            )
+        # Explicit deletes (not just FK cascades) keep databases created
+        # before foreign-key enforcement was enabled consistent as well.
+        conn.execute("DELETE FROM chunks WHERE file_id = ?", (file_id,))
+        conn.execute("DELETE FROM knowledge_file WHERE file_id = ?", (file_id,))
         cursor = conn.execute("DELETE FROM files WHERE id = ?", (file_id,))
 
     stored_path = row["path"]
     if stored_path:
-        try:
+        with contextlib.suppress(OSError):
             Path(stored_path).unlink(missing_ok=True)
-        except OSError:
-            pass
     return cursor.rowcount > 0
