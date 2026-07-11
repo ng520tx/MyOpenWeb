@@ -6,14 +6,10 @@ import pytest
 
 import server.services.rag as rag
 from server.repositories.files import create_file
-from server.repositories.knowledge import (
-    bind_file,
-    create_knowledge,
-    replace_chunks,
-    search_chunks_bm25,
-)
+from server.repositories.knowledge import bind_file, create_knowledge
 from server.schemas.config import ProviderConfig
-from server.services.tokenize import build_match_query, tokenize_for_bm25
+from server.services.tokenize import tokenize_for_bm25
+from server.vectorstores.factory import get_vector_store
 
 DOCS = [
     "数据库连接池耗尽时，先执行 SHOW PROCESSLIST 检查 MySQL 慢查询。",
@@ -38,11 +34,12 @@ def knowledge_id() -> str:
         text_content="\n".join(DOCS),
     )
     bind_file(knowledge.id, file_record.id)
-    replace_chunks(
+    get_vector_store().replace_chunks(
         knowledge.id,
         [
             {
                 "file_id": file_record.id,
+                "filename": file_record.filename,
                 "chunk_index": index,
                 "content": content,
                 "embedding": _fake_vector(index),
@@ -54,15 +51,16 @@ def knowledge_id() -> str:
     return knowledge.id
 
 
-def test_bm25_finds_exact_terms(knowledge_id: str):
-    ids = search_chunks_bm25(knowledge_id, build_match_query("bigkeys 大 key"), limit=3)
-    assert ids, "BM25 should match the Redis chunk"
+def test_keyword_query_finds_exact_terms(knowledge_id: str):
+    rows = get_vector_store().query_by_keywords(knowledge_id, "bigkeys 大 key", limit=3)
+    assert rows, "keyword ranking should match the Redis chunk"
+    assert "bigkeys" in rows[0]["content"]
 
 
 @pytest.mark.anyio
 async def test_hybrid_query_prefers_keyword_match(knowledge_id: str, monkeypatch):
     # Query vector points at doc 0 (the MySQL chunk) even though the question
-    # is about Redis — hybrid BM25 fusion must still surface the Redis chunk first.
+    # is about Redis — hybrid keyword fusion must still surface the Redis chunk first.
     async def fake_embed_query(config, model, text):
         return _fake_vector(0)
 

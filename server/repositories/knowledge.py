@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import contextlib
-import json
-import sqlite3
 import time
 import uuid
-from typing import Any
 
 from server.db import get_db
 from server.repositories.files import _row_to_record  # reuse file row mapping
 from server.schemas.file import FileRecord
 from server.schemas.knowledge import Knowledge, KnowledgeDetail
+from server.vectorstores.factory import get_vector_store
 
 
 def _now_ms() -> int:
@@ -34,10 +31,9 @@ def _counts(conn, knowledge_id: str) -> tuple[int, int]:
         "SELECT COUNT(*) AS c FROM knowledge_file WHERE knowledge_id = ?",
         (knowledge_id,),
     ).fetchone()["c"]
-    chunk_count = conn.execute(
-        "SELECT COUNT(*) AS c FROM chunks WHERE knowledge_id = ?",
-        (knowledge_id,),
-    ).fetchone()["c"]
+    # Chunks live in the configured vector store (SQLite by default, pgvector
+    # when switched), so the count comes from the store, not this database.
+    chunk_count = get_vector_store().count_chunks(knowledge_id)
     return file_count, chunk_count
 
 
@@ -106,9 +102,10 @@ def update_knowledge(knowledge_id: str, name: str | None, description: str | Non
 
 
 def delete_knowledge(knowledge_id: str) -> bool:
+    # Vector store cleanup first: with the pgvector backend the chunks live in
+    # another database and would otherwise be orphaned.
+    get_vector_store().delete_for_knowledge(knowledge_id)
     with get_db() as conn:
-        _fts_delete_for_knowledge(conn, knowledge_id)
-        conn.execute("DELETE FROM chunks WHERE knowledge_id = ?", (knowledge_id,))
         conn.execute("DELETE FROM knowledge_file WHERE knowledge_id = ?", (knowledge_id,))
         cursor = conn.execute("DELETE FROM knowledge WHERE id = ?", (knowledge_id,))
     return cursor.rowcount > 0
@@ -143,15 +140,11 @@ def bind_file(knowledge_id: str, file_id: str) -> bool:
 
 
 def unbind_file(knowledge_id: str, file_id: str) -> bool:
+    # Drop the now-detached file's chunks from the vector store first.
+    get_vector_store().delete_for_file(file_id, knowledge_id)
     with get_db() as conn:
         cursor = conn.execute(
             "DELETE FROM knowledge_file WHERE knowledge_id = ? AND file_id = ?",
-            (knowledge_id, file_id),
-        )
-        _fts_delete_for_file(conn, knowledge_id, file_id)
-        # Drop any stale chunks belonging to the now-detached file.
-        conn.execute(
-            "DELETE FROM chunks WHERE knowledge_id = ? AND file_id = ?",
             (knowledge_id, file_id),
         )
         conn.execute(
@@ -168,138 +161,3 @@ def list_knowledge_file_ids(knowledge_id: str) -> list[str]:
             (knowledge_id,),
         ).fetchall()
     return [row["file_id"] for row in rows]
-
-
-# ─── chunks / index ────────────────────────────────────────
-# The suppress(sqlite3.OperationalError) below covers SQLite builds compiled
-# without FTS5: hybrid retrieval then degrades to vector-only.
-
-def _fts_delete_for_knowledge(conn, knowledge_id: str) -> None:
-    with contextlib.suppress(sqlite3.OperationalError):
-        conn.execute("DELETE FROM chunks_fts WHERE knowledge_id = ?", (knowledge_id,))
-
-
-def _fts_delete_for_file(conn, knowledge_id: str, file_id: str) -> None:
-    with contextlib.suppress(sqlite3.OperationalError):
-        conn.execute(
-            """
-            DELETE FROM chunks_fts WHERE chunk_id IN (
-                SELECT id FROM chunks WHERE knowledge_id = ? AND file_id = ?
-            )
-            """,
-            (knowledge_id, file_id),
-        )
-
-
-def replace_chunks(knowledge_id: str, records: list[dict[str, Any]]) -> None:
-    """Atomically swap all chunks of a knowledge base with a fresh set.
-
-    Each record: {file_id, chunk_index, content, embedding(list[float]), tokens(str, optional)}
-    ``tokens`` feeds the FTS5 index used by BM25 hybrid retrieval.
-    """
-    now = _now_ms()
-    chunk_rows: list[tuple] = []
-    fts_rows: list[tuple] = []
-    for record in records:
-        chunk_id = uuid.uuid4().hex
-        chunk_rows.append(
-            (
-                chunk_id,
-                knowledge_id,
-                record["file_id"],
-                record["chunk_index"],
-                record["content"],
-                json.dumps(record["embedding"]),
-                now,
-            )
-        )
-        fts_rows.append((chunk_id, knowledge_id, record.get("tokens") or ""))
-
-    with get_db() as conn:
-        conn.execute("DELETE FROM chunks WHERE knowledge_id = ?", (knowledge_id,))
-        _fts_delete_for_knowledge(conn, knowledge_id)
-        conn.executemany(
-            """
-            INSERT INTO chunks (id, knowledge_id, file_id, chunk_index, content, embedding, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            chunk_rows,
-        )
-        with contextlib.suppress(sqlite3.OperationalError):
-            conn.executemany(
-                "INSERT INTO chunks_fts (chunk_id, knowledge_id, tokens) VALUES (?, ?, ?)",
-                fts_rows,
-            )
-
-
-def search_chunks_bm25(knowledge_id: str, match_query: str, limit: int = 10) -> list[str]:
-    """Return chunk ids ranked by BM25 (best first) for a prebuilt FTS5 MATCH query."""
-    if not match_query.strip():
-        return []
-    try:
-        with get_db() as conn:
-            rows = conn.execute(
-                """
-                SELECT chunk_id
-                FROM chunks_fts
-                WHERE chunks_fts MATCH ? AND knowledge_id = ?
-                ORDER BY bm25(chunks_fts)
-                LIMIT ?
-                """,
-                (match_query, knowledge_id, limit),
-            ).fetchall()
-    except sqlite3.OperationalError:
-        return []
-    return [row["chunk_id"] for row in rows]
-
-
-def get_chunks_stamp(knowledge_id: str) -> tuple[int, int, str]:
-    """Cheap version stamp of a knowledge base's chunk set.
-
-    ``replace_chunks`` swaps all rows with fresh random ids and a new
-    created_at, so (count, max created_at, min id) changes on every re-index.
-    The in-process vector cache validates against this stamp instead of
-    relying on invalidation hooks — which keeps it correct even when another
-    process (MCP server, eval harness) rebuilt the index on the shared DB.
-    """
-    with get_db() as conn:
-        row = conn.execute(
-            """
-            SELECT COUNT(*) AS c, COALESCE(MAX(created_at), 0) AS m, COALESCE(MIN(id), '') AS i
-            FROM chunks WHERE knowledge_id = ?
-            """,
-            (knowledge_id,),
-        ).fetchone()
-    return row["c"], row["m"], row["i"]
-
-
-def list_chunks_for_knowledge(knowledge_id: str) -> list[dict[str, Any]]:
-    with get_db() as conn:
-        rows = conn.execute(
-            """
-            SELECT c.id, c.file_id, c.chunk_index, c.content, c.embedding, f.filename
-            FROM chunks c
-            LEFT JOIN files f ON f.id = c.file_id
-            WHERE c.knowledge_id = ?
-            ORDER BY c.file_id, c.chunk_index
-            """,
-            (knowledge_id,),
-        ).fetchall()
-
-    result: list[dict[str, Any]] = []
-    for row in rows:
-        try:
-            embedding = json.loads(row["embedding"])
-        except (json.JSONDecodeError, TypeError):
-            continue
-        result.append(
-            {
-                "id": row["id"],
-                "file_id": row["file_id"],
-                "filename": row["filename"] or "未知文件",
-                "chunk_index": row["chunk_index"],
-                "content": row["content"],
-                "embedding": embedding,
-            }
-        )
-    return result

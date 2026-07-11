@@ -1,0 +1,3 @@
+# Optional pgvector backend (MYOPENWEB_VECTOR_BACKEND=pgvector).
+# Kept out of the base requirements so the default SQLite deployment stays light.
+psycopg[binary]>=3.2,<4

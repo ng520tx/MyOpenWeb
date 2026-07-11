@@ -14,6 +14,10 @@ services:
       - PROVIDER_BASE_URL=${PROVIDER_BASE_URL:-http://host.docker.internal:11434/v1}
       - PROVIDER_API_KEY=${PROVIDER_API_KEY:-}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-bge-m3}
+      # Vector backend: sqlite (default, zero services) or pgvector.
+      # Enable with: MYOPENWEB_VECTOR_BACKEND=pgvector docker compose --profile pgvector up -d
+      - MYOPENWEB_VECTOR_BACKEND=${MYOPENWEB_VECTOR_BACKEND:-sqlite}
+      - MYOPENWEB_PG_DSN=${MYOPENWEB_PG_DSN:-postgresql://myopenweb:myopenweb@pgvector:5432/myopenweb}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -31,6 +35,21 @@ services:
       - ollama-models:/root/.ollama
     restart: unless-stopped
 
+  # Optional PostgreSQL + pgvector vector backend:
+  #   MYOPENWEB_VECTOR_BACKEND=pgvector docker compose --profile pgvector up -d --build
+  # Existing knowledge bases need a one-time re-index after switching.
+  pgvector:
+    image: pgvector/pgvector:pg16
+    profiles: ["pgvector"]
+    environment:
+      - POSTGRES_USER=myopenweb
+      - POSTGRES_PASSWORD=myopenweb
+      - POSTGRES_DB=myopenweb
+    volumes:
+      - pgvector-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
 volumes:
   myopenweb-data:
   ollama-models:
+  pgvector-data:

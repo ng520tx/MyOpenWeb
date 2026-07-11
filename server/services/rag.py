@@ -2,22 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
-
-from server.repositories.files import get_file_text
-from server.repositories.knowledge import (
-    get_chunks_stamp,
-    list_chunks_for_knowledge,
-    list_knowledge_file_ids,
-    replace_chunks,
-    search_chunks_bm25,
-)
+from server.repositories.files import get_file_source, get_file_text
+from server.repositories.knowledge import list_knowledge_file_ids
 from server.schemas.config import ProviderConfig
 from server.services.embeddings import embed_query, embed_texts
 from server.services.query_rewrite import needs_rewrite, rewrite_query
 from server.services.rerank import rerank_chunks
 from server.services.retrieval_grader import grade_retrieval, merge_chunks
-from server.services.tokenize import build_match_query, tokenize_for_bm25
+from server.services.tokenize import tokenize_for_bm25
+from server.vectorstores.factory import get_vector_store
 
 CHUNK_SIZE = 600
 CHUNK_OVERLAP = 100
@@ -81,16 +74,20 @@ async def index_knowledge(
     overlap: int = CHUNK_OVERLAP,
 ) -> dict[str, Any]:
     """Re-chunk and re-embed every file bound to a knowledge base."""
+    store = get_vector_store()
     file_ids = list_knowledge_file_ids(knowledge_id)
 
+    filenames: dict[str, str] = {}
     pending: list[tuple[str, int, str]] = []  # (file_id, chunk_index, content)
     for file_id in file_ids:
+        source = get_file_source(file_id)
+        filenames[file_id] = source[1] if source else "未知文件"
         text = get_file_text(file_id) or ""
         for index, chunk in enumerate(split_text(text, chunk_size, overlap)):
             pending.append((file_id, index, chunk))
 
     if not pending:
-        replace_chunks(knowledge_id, [])
+        store.replace_chunks(knowledge_id, [])
         return {"knowledge_id": knowledge_id, "files": len(file_ids), "chunks": 0}
 
     contents = [item[2] for item in pending]
@@ -102,6 +99,7 @@ async def index_knowledge(
     records = [
         {
             "file_id": file_id,
+            "filename": filenames.get(file_id, "未知文件"),
             "chunk_index": chunk_index,
             "content": content,
             "embedding": embedding,
@@ -109,51 +107,8 @@ async def index_knowledge(
         }
         for (file_id, chunk_index, content), embedding in zip(pending, embeddings, strict=True)
     ]
-    replace_chunks(knowledge_id, records)
+    store.replace_chunks(knowledge_id, records)
     return {"knowledge_id": knowledge_id, "files": len(file_ids), "chunks": len(records)}
-
-
-# ─── in-process vector cache ───────────────────────────────
-# Retrieval used to reload every chunk row and json.loads every embedding on
-# each query — O(N) JSON parsing per request. Instead we keep the parsed rows
-# plus a pre-normalized numpy matrix per knowledge base in memory, validated
-# against a cheap version stamp so re-indexes (even from another process on
-# the shared SQLite, e.g. the MCP server) are picked up on the next query.
-_vector_cache: dict[str, dict[str, Any]] = {}
-
-
-def _load_cached_rows(knowledge_id: str) -> dict[str, Any] | None:
-    stamp = get_chunks_stamp(knowledge_id)
-    if stamp[0] == 0:
-        _vector_cache.pop(knowledge_id, None)
-        return None
-    cached = _vector_cache.get(knowledge_id)
-    if cached is None or cached["stamp"] != stamp:
-        cached = {
-            "stamp": stamp,
-            "rows": list_chunks_for_knowledge(knowledge_id),
-            "by_dim": {},  # query dim → (row indices, matrix, row norms)
-        }
-        _vector_cache[knowledge_id] = cached
-    return cached
-
-
-def _vectors_for_dim(
-    cached: dict[str, Any], dim: int
-) -> tuple[list[int], Any, Any]:
-    entry = cached["by_dim"].get(dim)
-    if entry is None:
-        rows = cached["rows"]
-        indices = [i for i, row in enumerate(rows) if len(row["embedding"]) == dim]
-        if indices:
-            matrix = np.asarray([rows[i]["embedding"] for i in indices], dtype=np.float32)
-            norms = np.linalg.norm(matrix, axis=1)
-            norms[norms == 0] = 1e-9
-            entry = (indices, matrix, norms)
-        else:
-            entry = ([], None, None)
-        cached["by_dim"][dim] = entry
-    return entry
 
 
 async def query_knowledge(
@@ -167,15 +122,13 @@ async def query_knowledge(
 ) -> list[dict[str, Any]]:
     """Return the most relevant chunks for a query.
 
-    Pipeline: vector cosine ranking → optional BM25 (SQLite FTS5) fused via
-    Reciprocal Rank Fusion → optional cross-encoder rerank. ``mode`` and
-    ``rerank`` override the persisted config (used by the debug endpoint and
-    the eval harness for A/B comparisons).
+    Pipeline: vector cosine top-k from the configured VectorStore → optional
+    keyword ranking fused via Reciprocal Rank Fusion → optional cross-encoder
+    rerank. The store backend (SQLite numpy / pgvector SQL) is transparent to
+    this layer. ``mode`` and ``rerank`` override the persisted config (used by
+    the debug endpoint and the eval harness for A/B comparisons).
     """
     if not query.strip():
-        return []
-    cached = _load_cached_rows(knowledge_id)
-    if cached is None:
         return []
 
     retrieval_mode = mode if mode in ("vector", "hybrid") else config.retrieval_mode
@@ -185,27 +138,20 @@ async def query_knowledge(
     if not query_vec:
         return []
 
-    indices, matrix, matrix_norms = _vectors_for_dim(cached, len(query_vec))
-    if not indices:
-        # Embeddings were built with a different model/dimension; needs re-index.
-        return []
-
-    rows = cached["rows"]
-    usable = [rows[i] for i in indices]
-    q = np.asarray(query_vec, dtype=np.float32)
-    q_norm = float(np.linalg.norm(q)) or 1e-9
-    scores = (matrix @ q) / (matrix_norms * q_norm)
-
+    store = get_vector_store()
     # Pull a wider candidate pool than top_k so fusion/rerank has room to work.
     pool_size = max(top_k * 3, 10)
-    vector_order = [int(i) for i in np.argsort(-scores)[: min(pool_size, len(usable))]]
+    vector_rows = store.query_by_vector(knowledge_id, query_vec, pool_size)
+    if not vector_rows:
+        # Empty knowledge base, or embeddings built with a different
+        # model/dimension (needs re-index).
+        return []
 
     if retrieval_mode == "hybrid":
-        candidates = _fuse_rrf(usable, scores, vector_order, knowledge_id, query, pool_size)
+        keyword_rows = store.query_by_keywords(knowledge_id, query, pool_size)
+        candidates = _fuse_rrf(vector_rows, keyword_rows, pool_size)
     else:
-        candidates = [
-            _chunk_result(usable[idx], float(scores[idx])) for idx in vector_order
-        ]
+        candidates = [_chunk_result(row, float(row["score"])) for row in vector_rows]
 
     if use_rerank and candidates:
         reranked = await rerank_chunks(config.rerank_model, query, candidates)
@@ -227,26 +173,21 @@ def _chunk_result(row: dict[str, Any], score: float) -> dict[str, Any]:
 
 
 def _fuse_rrf(
-    usable: list[dict[str, Any]],
-    scores: Any,
-    vector_order: list[int],
-    knowledge_id: str,
-    query: str,
+    vector_rows: list[dict[str, Any]],
+    keyword_rows: list[dict[str, Any]],
     pool_size: int,
 ) -> list[dict[str, Any]]:
-    """Merge vector and BM25 rankings with Reciprocal Rank Fusion."""
-    by_id = {row["id"]: row for row in usable}
-
+    """Merge two ranked row lists (vector + keyword) with Reciprocal Rank Fusion."""
+    by_id: dict[str, dict[str, Any]] = {}
     rrf_scores: dict[str, float] = {}
-    for rank, idx in enumerate(vector_order):
-        chunk_id = usable[idx]["id"]
-        rrf_scores[chunk_id] = rrf_scores.get(chunk_id, 0.0) + 1.0 / (RRF_K + rank + 1)
 
-    bm25_ids = search_chunks_bm25(knowledge_id, build_match_query(query), pool_size)
-    for rank, chunk_id in enumerate(bm25_ids):
-        if chunk_id not in by_id:
-            continue  # stale FTS row or dimension-filtered chunk
-        rrf_scores[chunk_id] = rrf_scores.get(chunk_id, 0.0) + 1.0 / (RRF_K + rank + 1)
+    for rank, row in enumerate(vector_rows):
+        by_id[row["id"]] = row
+        rrf_scores[row["id"]] = rrf_scores.get(row["id"], 0.0) + 1.0 / (RRF_K + rank + 1)
+
+    for rank, row in enumerate(keyword_rows):
+        by_id.setdefault(row["id"], row)
+        rrf_scores[row["id"]] = rrf_scores.get(row["id"], 0.0) + 1.0 / (RRF_K + rank + 1)
 
     ordered_ids = sorted(rrf_scores, key=lambda cid: -rrf_scores[cid])
     return [_chunk_result(by_id[cid], rrf_scores[cid]) for cid in ordered_ids[:pool_size]]

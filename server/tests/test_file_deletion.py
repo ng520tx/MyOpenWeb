@@ -15,12 +15,10 @@ from server.repositories.files import create_file, delete_file
 from server.repositories.knowledge import (
     bind_file,
     create_knowledge,
-    list_chunks_for_knowledge,
     list_knowledge_file_ids,
-    replace_chunks,
-    search_chunks_bm25,
 )
-from server.services.tokenize import build_match_query, tokenize_for_bm25
+from server.services.tokenize import tokenize_for_bm25
+from server.vectorstores.factory import get_vector_store
 
 
 def _make_indexed_file(knowledge_id: str, content: str) -> str:
@@ -31,11 +29,12 @@ def _make_indexed_file(knowledge_id: str, content: str) -> str:
         text_content=content,
     )
     bind_file(knowledge_id, record.id)
-    replace_chunks(
+    get_vector_store().replace_chunks(
         knowledge_id,
         [
             {
                 "file_id": record.id,
+                "filename": record.filename,
                 "chunk_index": 0,
                 "content": content,
                 "embedding": [1.0, 0.0, 0.0, 0.0],
@@ -46,18 +45,20 @@ def _make_indexed_file(knowledge_id: str, content: str) -> str:
     return record.id
 
 
-def test_delete_file_removes_chunks_binding_and_fts():
+def test_delete_file_removes_chunks_binding_and_keyword_index():
     knowledge = create_knowledge("delete-test-kb", "orphan chunk regression")
     content = "Kafka 消费积压时先检查 consumer group 的 lag 指标。"
     file_id = _make_indexed_file(knowledge.id, content)
+    store = get_vector_store()
 
-    assert list_chunks_for_knowledge(knowledge.id), "precondition: index built"
+    assert store.count_chunks(knowledge.id) == 1, "precondition: index built"
 
     assert delete_file(file_id) is True
 
-    assert list_chunks_for_knowledge(knowledge.id) == []
+    assert store.count_chunks(knowledge.id) == 0
+    assert store.query_by_vector(knowledge.id, [1.0, 0.0, 0.0, 0.0], limit=5) == []
+    assert store.query_by_keywords(knowledge.id, "kafka lag", limit=5) == []
     assert list_knowledge_file_ids(knowledge.id) == []
-    assert search_chunks_bm25(knowledge.id, build_match_query("kafka lag"), limit=5) == []
 
 
 def test_foreign_keys_are_enforced():

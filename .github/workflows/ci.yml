@@ -28,16 +28,30 @@ jobs:
       - run: pnpm lint
 
   backend:
-    name: Backend tests
+    name: Backend tests (sqlite + pgvector)
     runs-on: ubuntu-latest
+    services:
+      pgvector:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r server/requirements-dev.txt
+      - run: pip install -r server/requirements-dev.txt -r server/requirements-pgvector.txt
       - run: python -m pytest server/tests -q
+        env:
+          MYOPENWEB_TEST_PG_DSN: postgresql://postgres:postgres@localhost:5432/postgres
 
   frontend:
     name: Frontend tests + build
