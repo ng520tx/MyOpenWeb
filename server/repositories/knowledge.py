@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import time
@@ -170,16 +171,16 @@ def list_knowledge_file_ids(knowledge_id: str) -> list[str]:
 
 
 # ─── chunks / index ────────────────────────────────────────
+# The suppress(sqlite3.OperationalError) below covers SQLite builds compiled
+# without FTS5: hybrid retrieval then degrades to vector-only.
 
 def _fts_delete_for_knowledge(conn, knowledge_id: str) -> None:
-    try:
+    with contextlib.suppress(sqlite3.OperationalError):
         conn.execute("DELETE FROM chunks_fts WHERE knowledge_id = ?", (knowledge_id,))
-    except sqlite3.OperationalError:
-        pass
 
 
 def _fts_delete_for_file(conn, knowledge_id: str, file_id: str) -> None:
-    try:
+    with contextlib.suppress(sqlite3.OperationalError):
         conn.execute(
             """
             DELETE FROM chunks_fts WHERE chunk_id IN (
@@ -188,8 +189,6 @@ def _fts_delete_for_file(conn, knowledge_id: str, file_id: str) -> None:
             """,
             (knowledge_id, file_id),
         )
-    except sqlite3.OperationalError:
-        pass
 
 
 def replace_chunks(knowledge_id: str, records: list[dict[str, Any]]) -> None:
@@ -226,14 +225,11 @@ def replace_chunks(knowledge_id: str, records: list[dict[str, Any]]) -> None:
             """,
             chunk_rows,
         )
-        try:
+        with contextlib.suppress(sqlite3.OperationalError):
             conn.executemany(
                 "INSERT INTO chunks_fts (chunk_id, knowledge_id, tokens) VALUES (?, ?, ?)",
                 fts_rows,
             )
-        except sqlite3.OperationalError:
-            # SQLite without FTS5: hybrid retrieval degrades to vector-only.
-            pass
 
 
 def search_chunks_bm25(knowledge_id: str, match_query: str, limit: int = 10) -> list[str]:
@@ -255,6 +251,26 @@ def search_chunks_bm25(knowledge_id: str, match_query: str, limit: int = 10) -> 
     except sqlite3.OperationalError:
         return []
     return [row["chunk_id"] for row in rows]
+
+
+def get_chunks_stamp(knowledge_id: str) -> tuple[int, int, str]:
+    """Cheap version stamp of a knowledge base's chunk set.
+
+    ``replace_chunks`` swaps all rows with fresh random ids and a new
+    created_at, so (count, max created_at, min id) changes on every re-index.
+    The in-process vector cache validates against this stamp instead of
+    relying on invalidation hooks — which keeps it correct even when another
+    process (MCP server, eval harness) rebuilt the index on the shared DB.
+    """
+    with get_db() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS c, COALESCE(MAX(created_at), 0) AS m, COALESCE(MIN(id), '') AS i
+            FROM chunks WHERE knowledge_id = ?
+            """,
+            (knowledge_id,),
+        ).fetchone()
+    return row["c"], row["m"], row["i"]
 
 
 def list_chunks_for_knowledge(knowledge_id: str) -> list[dict[str, Any]]:

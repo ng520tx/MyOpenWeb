@@ -6,6 +6,7 @@ import numpy as np
 
 from server.repositories.files import get_file_text
 from server.repositories.knowledge import (
+    get_chunks_stamp,
     list_chunks_for_knowledge,
     list_knowledge_file_ids,
     replace_chunks,
@@ -17,7 +18,6 @@ from server.services.query_rewrite import needs_rewrite, rewrite_query
 from server.services.rerank import rerank_chunks
 from server.services.retrieval_grader import grade_retrieval, merge_chunks
 from server.services.tokenize import build_match_query, tokenize_for_bm25
-
 
 CHUNK_SIZE = 600
 CHUNK_OVERLAP = 100
@@ -107,10 +107,53 @@ async def index_knowledge(
             "embedding": embedding,
             "tokens": tokenize_for_bm25(content),
         }
-        for (file_id, chunk_index, content), embedding in zip(pending, embeddings)
+        for (file_id, chunk_index, content), embedding in zip(pending, embeddings, strict=True)
     ]
     replace_chunks(knowledge_id, records)
     return {"knowledge_id": knowledge_id, "files": len(file_ids), "chunks": len(records)}
+
+
+# ─── in-process vector cache ───────────────────────────────
+# Retrieval used to reload every chunk row and json.loads every embedding on
+# each query — O(N) JSON parsing per request. Instead we keep the parsed rows
+# plus a pre-normalized numpy matrix per knowledge base in memory, validated
+# against a cheap version stamp so re-indexes (even from another process on
+# the shared SQLite, e.g. the MCP server) are picked up on the next query.
+_vector_cache: dict[str, dict[str, Any]] = {}
+
+
+def _load_cached_rows(knowledge_id: str) -> dict[str, Any] | None:
+    stamp = get_chunks_stamp(knowledge_id)
+    if stamp[0] == 0:
+        _vector_cache.pop(knowledge_id, None)
+        return None
+    cached = _vector_cache.get(knowledge_id)
+    if cached is None or cached["stamp"] != stamp:
+        cached = {
+            "stamp": stamp,
+            "rows": list_chunks_for_knowledge(knowledge_id),
+            "by_dim": {},  # query dim → (row indices, matrix, row norms)
+        }
+        _vector_cache[knowledge_id] = cached
+    return cached
+
+
+def _vectors_for_dim(
+    cached: dict[str, Any], dim: int
+) -> tuple[list[int], Any, Any]:
+    entry = cached["by_dim"].get(dim)
+    if entry is None:
+        rows = cached["rows"]
+        indices = [i for i, row in enumerate(rows) if len(row["embedding"]) == dim]
+        if indices:
+            matrix = np.asarray([rows[i]["embedding"] for i in indices], dtype=np.float32)
+            norms = np.linalg.norm(matrix, axis=1)
+            norms[norms == 0] = 1e-9
+            entry = (indices, matrix, norms)
+        else:
+            entry = ([], None, None)
+        cached["by_dim"][dim] = entry
+    return entry
 
 
 async def query_knowledge(
@@ -129,8 +172,10 @@ async def query_knowledge(
     ``rerank`` override the persisted config (used by the debug endpoint and
     the eval harness for A/B comparisons).
     """
-    rows = list_chunks_for_knowledge(knowledge_id)
-    if not rows or not query.strip():
+    if not query.strip():
+        return []
+    cached = _load_cached_rows(knowledge_id)
+    if cached is None:
         return []
 
     retrieval_mode = mode if mode in ("vector", "hybrid") else config.retrieval_mode
@@ -140,20 +185,16 @@ async def query_knowledge(
     if not query_vec:
         return []
 
-    query_dim = len(query_vec)
-    usable = [row for row in rows if len(row["embedding"]) == query_dim]
-    if not usable:
+    indices, matrix, matrix_norms = _vectors_for_dim(cached, len(query_vec))
+    if not indices:
         # Embeddings were built with a different model/dimension; needs re-index.
         return []
 
-    matrix = np.asarray([row["embedding"] for row in usable], dtype=np.float32)
+    rows = cached["rows"]
+    usable = [rows[i] for i in indices]
     q = np.asarray(query_vec, dtype=np.float32)
-
-    matrix_norms = np.linalg.norm(matrix, axis=1)
-    q_norm = np.linalg.norm(q)
-    denom = matrix_norms * q_norm
-    denom[denom == 0] = 1e-9
-    scores = (matrix @ q) / denom
+    q_norm = float(np.linalg.norm(q)) or 1e-9
+    scores = (matrix @ q) / (matrix_norms * q_norm)
 
     # Pull a wider candidate pool than top_k so fusion/rerank has room to work.
     pool_size = max(top_k * 3, 10)

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { fetchAgentRun } from '@/apis/agent';
@@ -12,7 +12,7 @@ interface MessageBubbleProps {
   onFollowUpClick?: (text: string) => void;
 }
 
-export default function MessageBubble({ message, showFollowUps, onFollowUpClick }: MessageBubbleProps) {
+function MessageBubble({ message, showFollowUps, onFollowUpClick }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const imageFiles = message.files?.filter((f) => f.isImage && f.dataUrl) ?? [];
   const textFiles = message.files?.filter((f) => !f.isImage) ?? [];
@@ -242,6 +242,12 @@ export default function MessageBubble({ message, showFollowUps, onFollowUpClick 
     </div>
   );
 }
+
+// The store updates messages immutably, so during streaming only the message
+// being appended to gets a new object reference. Shallow memo therefore skips
+// re-rendering (and re-parsing markdown for) every other bubble on each SSE
+// delta — the difference between a smooth and a janky long chat on mobile.
+export default memo(MessageBubble);
 
 /** Agent 生成过程实时时间线：思考 / 工具调用 / 工具结果 */
 function AgentTimeline({ events }: { events: AgentStepEvent[] }) {
