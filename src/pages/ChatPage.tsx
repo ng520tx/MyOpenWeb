@@ -103,6 +103,9 @@ export default function ChatPage() {
             if (update.sources) {
               useAppStore.getState().updateMessage(aiId, { sources: update.sources });
             }
+            if (update.retrievalWarning) {
+              useAppStore.getState().updateMessage(aiId, { retrievalWarning: update.retrievalWarning });
+            }
             if (update.usage) {
               useAppStore.getState().updateMessage(aiId, { usage: update.usage });
             }
@@ -128,6 +131,7 @@ export default function ChatPage() {
             done: true,
             agent: data.agent,
             sources: data.sources,
+            retrievalWarning: typeof data.retrieval_warning === 'string' ? data.retrieval_warning : undefined,
             usage: data.usage,
             durationMs: Date.now() - startedAt,
           });

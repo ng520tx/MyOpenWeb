@@ -36,6 +36,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   webSearchEnabled: false,
   agentEnabled: false,
   agentToolProtocol: 'prompt',
+  agentMaxRounds: 3,
   model: DEFAULT_MODEL,
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
   temperature: 0.7,

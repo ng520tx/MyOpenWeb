@@ -11,6 +11,8 @@ export interface ChatMessage {
   files?: FileAttachment[];
   agent?: AgentSummary;
   sources?: RetrievalSource[];
+  /** 知识库检索失败降级时的提示（本次回答未使用知识库） */
+  retrievalWarning?: string;
   /** Agent 生成过程中实时推送的步骤事件（仅生成中渲染时间线用） */
   agentEvents?: AgentStepEvent[];
   /** 回答完成后异步生成的追问建议（仅最新一条回答下渲染 chip） */
@@ -124,6 +126,8 @@ export interface AppSettings {
   webSearchEnabled: boolean;
   agentEnabled: boolean;
   agentToolProtocol: AgentToolProtocol;
+  /** Agent 工具循环硬上限（1-10，后端同步 clamp） */
+  agentMaxRounds: number;
   model: string;
   systemPrompt: string;
   temperature: number;
@@ -149,6 +153,7 @@ export interface ProviderConfig {
   agenticRetrievalEnabled: boolean;
   webSearchEnabled: boolean;
   agentToolProtocol: AgentToolProtocol;
+  agentMaxRounds: number;
 }
 
 export interface FileRecord {
@@ -217,6 +222,7 @@ export type TextStreamUpdate = {
   agent?: AgentSummary;
   sources?: RetrievalSource[];
   agentEvent?: AgentStepEvent;
+  retrievalWarning?: string;
 };
 
 export type ResponseUsage = {

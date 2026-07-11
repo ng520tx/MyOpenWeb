@@ -42,6 +42,9 @@ class ProviderConfig(BaseModel):
     # decision (works with any model), "native" uses the provider's function
     # calling API (requires model-side tools support, e.g. qwen2.5).
     agent_tool_protocol: AgentToolProtocol = "prompt"
+    # Hard ceiling for the agent tool loop. Local small models take 5-15s per
+    # round, so the default stays low; clamped to 1..10 on persist.
+    agent_max_rounds: int = 3
 
 
 class ProviderVerifyResult(BaseModel):

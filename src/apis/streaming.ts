@@ -131,20 +131,23 @@ async function* openAIStreamToIterator(
       const sources = Array.isArray(parsed.sources) ? (parsed.sources as RetrievalSource[]) : undefined;
       const agentEvent = isAgentStepEvent(parsed.agent_event) ? parsed.agent_event : undefined;
       const usage = isResponseUsage(parsed.usage) ? parsed.usage : undefined;
+      const retrievalWarning =
+        typeof parsed.retrieval_warning === 'string' ? parsed.retrieval_warning : undefined;
 
       if (pendingDone) {
         if (usage) pendingDone.usage = usage;
         if (agent) pendingDone.agent = agent;
         if (sources) pendingDone.sources = sources;
+        if (retrievalWarning) pendingDone.retrievalWarning = retrievalWarning;
         continue;
       }
 
       if (finishReason === 'stop') {
-        pendingDone = { done: true, value: delta, agent, sources, agentEvent, usage };
+        pendingDone = { done: true, value: delta, agent, sources, agentEvent, usage, retrievalWarning };
         continue;
       }
 
-      yield { done: false, value: delta, agent, sources, agentEvent, usage };
+      yield { done: false, value: delta, agent, sources, agentEvent, usage, retrievalWarning };
     } catch {
       continue;
     }

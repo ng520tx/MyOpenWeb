@@ -30,6 +30,14 @@ def resolve_provider_config(config: ProviderConfig) -> ProviderConfig:
     return config
 
 
+def _clamp_rounds(value: object) -> int:
+    try:
+        rounds = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 3
+    return max(1, min(rounds, 10))
+
+
 def get_provider_config() -> ProviderConfig:
     with get_db() as conn:
         rows = conn.execute("SELECT key, value FROM app_config").fetchall()
@@ -59,6 +67,7 @@ def get_provider_config() -> ProviderConfig:
         agentic_retrieval_enabled=(values.get("agentic_retrieval_enabled") or "0") == "1",
         web_search_enabled=(values.get("web_search_enabled") or "0") == "1",
         agent_tool_protocol=agent_tool_protocol,
+        agent_max_rounds=_clamp_rounds(values.get("agent_max_rounds", 3)),
     )
 
 
@@ -67,6 +76,7 @@ def update_provider_config(config: ProviderConfig) -> ProviderConfig:
     ocr_mode = config.ocr_mode if config.ocr_mode in ("auto", "always") else "auto"
     retrieval_mode = config.retrieval_mode if config.retrieval_mode in ("vector", "hybrid") else "hybrid"
     agent_tool_protocol = config.agent_tool_protocol if config.agent_tool_protocol in ("prompt", "native") else "prompt"
+    agent_max_rounds = _clamp_rounds(config.agent_max_rounds)
     stored = {
         "provider_type": config.provider_type,
         "provider_base_url": config.provider_base_url.strip(),
@@ -82,6 +92,7 @@ def update_provider_config(config: ProviderConfig) -> ProviderConfig:
         "agentic_retrieval_enabled": "1" if config.agentic_retrieval_enabled else "0",
         "web_search_enabled": "1" if config.web_search_enabled else "0",
         "agent_tool_protocol": agent_tool_protocol,
+        "agent_max_rounds": str(agent_max_rounds),
     }
 
     with get_db() as conn:
@@ -105,4 +116,5 @@ def update_provider_config(config: ProviderConfig) -> ProviderConfig:
         agentic_retrieval_enabled=config.agentic_retrieval_enabled,
         web_search_enabled=config.web_search_enabled,
         agent_tool_protocol=agent_tool_protocol,
+        agent_max_rounds=agent_max_rounds,
     )

@@ -86,6 +86,14 @@ function MessageBubble({ message, showFollowUps, onFollowUpClick }: MessageBubbl
           </div>
         ) : (
           <>
+            {message.retrievalWarning && (
+              <div className="mb-2 flex items-start gap-1.5 rounded-lg border border-amber-800/60 bg-amber-950/30 px-2.5 py-1.5 text-xs text-amber-200">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0">
+                  <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><path d="M12 9v4" /><path d="M12 17h.01" />
+                </svg>
+                <span className="break-words">{message.retrievalWarning}</span>
+              </div>
+            )}
             {!message.done && (message.agentEvents?.length ?? 0) > 0 && (
               <AgentTimeline events={message.agentEvents!} />
             )}

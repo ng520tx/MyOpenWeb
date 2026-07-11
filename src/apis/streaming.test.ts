@@ -72,6 +72,19 @@ describe('createOpenAITextStream', () => {
     expect(updates[2].value).toBe('42');
   });
 
+  it('passes the retrieval degradation warning through', async () => {
+    const stream = bytesStream([
+      sse({ retrieval_warning: '??????????????????', choices: [{ delta: {}, finish_reason: null }] }),
+      sse({ choices: [{ delta: { content: '????' }, finish_reason: null }] }),
+      'data: [DONE]\n\n',
+    ]);
+
+    const updates = await collect(await createOpenAITextStream(stream));
+
+    expect(updates[0].retrievalWarning).toContain('???????');
+    expect(updates[1].value).toBe('????');
+  });
+
   it('surfaces upstream error frames as a terminal error update', async () => {
     const stream = bytesStream([
       sse({ error: { message: 'model not found' } }),

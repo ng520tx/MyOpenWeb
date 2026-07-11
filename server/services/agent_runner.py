@@ -137,7 +137,8 @@ async def run_agent_events(
     collected_chunks: list[dict[str, Any]] = []
     total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
-    for round_index in range(3):
+    max_rounds = max(1, min(int(config.agent_max_rounds or 3), 10))
+    for round_index in range(max_rounds):
         yield ("event", {"type": "thinking", "round": round_index + 1})
         assistant_message: dict[str, Any] | None = None
         request_payload: dict[str, Any] = {
@@ -359,7 +360,16 @@ async def _run_knowledge_search(
         top_k = int(tool_input.get("top_k") or 4)
     except (TypeError, ValueError):
         top_k = 4
-    chunks = await query_knowledge(config, config.embedding_model, knowledge_id, query, top_k)
+    try:
+        chunks = await query_knowledge(config, config.embedding_model, knowledge_id, query, top_k)
+    except Exception as exc:  # embedding service down, vector store unreachable...
+        # A broken retrieval path must not abort the whole agent run; give the
+        # model a structured error it can relay to the user.
+        return {
+            "error": "知识库检索失败（向量服务不可用），请告知用户本次回答未使用知识库",
+            "detail": str(exc)[:200],
+            "results": [],
+        }
     collected_chunks.extend(chunks)
     if not chunks:
         return {"results": [], "note": "知识库中没有找到相关内容"}

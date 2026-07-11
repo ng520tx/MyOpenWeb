@@ -16,6 +16,7 @@ interface ProviderConfigPayload {
   agentic_retrieval_enabled: boolean;
   web_search_enabled: boolean;
   agent_tool_protocol: ProviderConfig['agentToolProtocol'];
+  agent_max_rounds: number;
 }
 
 type ProviderSettings = Pick<
@@ -34,6 +35,7 @@ type ProviderSettings = Pick<
   | 'agenticRetrievalEnabled'
   | 'webSearchEnabled'
   | 'agentToolProtocol'
+  | 'agentMaxRounds'
 >;
 
 export interface ProviderVerifyResult {
@@ -68,6 +70,7 @@ function toProviderPayload(settings: ProviderSettings): ProviderConfigPayload {
     agentic_retrieval_enabled: settings.agenticRetrievalEnabled,
     web_search_enabled: settings.webSearchEnabled,
     agent_tool_protocol: settings.agentToolProtocol,
+    agent_max_rounds: Math.max(1, Math.min(Math.round(settings.agentMaxRounds || 3), 10)),
   };
 }
 
@@ -87,6 +90,7 @@ function fromProviderPayload(payload: ProviderConfigPayload): ProviderConfig {
     agenticRetrievalEnabled: Boolean(payload.agentic_retrieval_enabled),
     webSearchEnabled: Boolean(payload.web_search_enabled),
     agentToolProtocol: payload.agent_tool_protocol === 'native' ? 'native' : 'prompt',
+    agentMaxRounds: payload.agent_max_rounds || 3,
   };
 }
 

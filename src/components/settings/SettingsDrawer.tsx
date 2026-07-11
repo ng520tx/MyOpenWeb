@@ -454,6 +454,20 @@ export default function SettingsDrawer() {
                   Prompt 协议靠系统提示词约定 JSON 输出，任何模型可用；原生协议走模型 tools 接口（如 qwen2.5），格式更稳但依赖模型支持。
                 </span>
               </Field>
+              <Field label={`最大工具轮数：${settings.agentMaxRounds}`}>
+                <input
+                  type="range"
+                  min={1}
+                  max={10}
+                  step={1}
+                  value={settings.agentMaxRounds}
+                  onChange={(e) => updateSettings({ agentMaxRounds: Number(e.target.value) })}
+                  className="w-full"
+                />
+                <span className="text-xs text-neutral-500 mt-1 block leading-relaxed">
+                  Agent 工具循环硬上限（默认 3）。本地小模型一轮约 5-15 秒，轮数越大等待越久；超限自动兜底结束。
+                </span>
+              </Field>
               <Toggle
                 label="联网搜索工具（web_search）"
                 checked={settings.webSearchEnabled}
