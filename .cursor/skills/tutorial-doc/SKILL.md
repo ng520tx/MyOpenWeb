@@ -1,11 +1,11 @@
 ---
 name: tutorial-doc
-description: 续写或修改 doc/ 目录下的《MyOpenWeb 修炼手册》教材（HTML 系列）。当用户要求"续写第 X 章教材"、"新增教材章节"、"修改修炼手册"、"更新 doc 教程"时使用，保证新章节与既有 10 章的设计系统、栏目结构、写作风格完全一致。
+description: 续写或修改 doc/ 目录下的《MyOpenWeb 修炼手册》教材（HTML 系列）。当用户要求"续写第 X 章教材"、"新增教材章节"、"修改修炼手册"、"更新 doc 教程"时使用，保证新章节与既有 10+1 章（含 Ch03½ 补强章）的设计系统、栏目结构、写作风格完全一致。
 ---
 
 # MyOpenWeb 修炼手册 · 编写规范
 
-`doc/` 目录是一套面向作者本人（19 年前端/Android 经验，Python/AI 初学）的 AI 应用开发教材，共 `index.html` + `ch01`~`ch10` 十章，纯静态 HTML，双击即开、零 CDN。
+`doc/` 目录是一套面向作者本人（19 年前端/Android 经验，Python/AI 初学）的 AI 应用开发教材，共 `index.html` + `ch01`~`ch10` 十章 + `ch03b` 补强章（Prompt/Context/Transformer/多Agent），纯静态 HTML，双击即开、零 CDN。
 
 ## 文件与资产结构
 

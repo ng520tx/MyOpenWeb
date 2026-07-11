@@ -14,9 +14,9 @@
 
       <div class="ch-head">
         <div class="ch-eyebrow"><span class="badge">CH 10</span><span class="part">第三部分 · 工程与进阶</span></div>
-        <h1>面试通关手册<br>—— 话术模板、50+ 题总集与系统设计推演</h1>
-        <p class="lede">前 9 章是弹药库，这一章是作战手册：开场怎么介绍项目、被追问「为什么不用 LangChain」怎么接、50+ 高频题在哪一章找答案、系统设计题怎么完整推演。<b>建议面试前一晚只读这一章</b>。</p>
-        <div class="ch-meta"><span>面试前一晚重读</span><span>难度 ★★★☆☆</span><span>全书面试题索引 + 12 道综合新题</span></div>
+        <h1>面试通关手册<br>—— 话术模板、70+ 题总集与系统设计推演</h1>
+        <p class="lede">前面各章是弹药库，这一章是作战手册：开场怎么介绍项目、被追问「为什么不用 LangChain」怎么接、70+ 高频题在哪一章找答案、系统设计题怎么完整推演。<b>建议面试前一晚只读这一章</b>。</p>
+        <div class="ch-meta"><span>面试前一晚重读</span><span>难度 ★★★☆☆</span><span>全书 60 题索引 + 12 道综合新题</span></div>
       </div>
 
       <div class="goals">
@@ -24,7 +24,7 @@
         <ul>
           <li>背下来就能用的 <b>1 分钟 / 5 分钟项目介绍</b></li>
           <li>「为什么不用 LangChain」<b>三连追问</b>的完整应对</li>
-          <li>全书 <b>52 题按模块索引</b> + 本章 <b>12 道综合题</b>（合计 60+）</li>
+          <li>全书 <b>60 题按模块索引</b> + 本章 <b>12 道综合题</b>（合计 70+）</li>
           <li>一道系统设计题的<b>完整白板推演</b>：设计企业知识库问答系统</li>
         </ul>
       </div>
@@ -58,13 +58,14 @@
         <p>千万别说「LangChain 太烂了/太重了」这种否定性判断——面试官的团队可能正在用。所有答案的落点都是「<b>约束决定选型，两条路我都走得了</b>」。</p>
       </div>
 
-      <h2 class="sec-t"><span class="no">SECTION 10.3</span>全书 52 题模块索引 + 12 道综合新题</h2>
-      <p>各章「面试官视角」板块已覆盖 52 题，按模块索引如下（面试前按弱项定向复习）：</p>
+      <h2 class="sec-t"><span class="no">SECTION 10.3</span>全书 60 题模块索引 + 12 道综合新题</h2>
+      <p>各章「面试官视角」板块已覆盖 60 题，按模块索引如下（面试前按弱项定向复习）：</p>
       <table class="cmp-table">
         <tr><th>模块</th><th>题目焦点</th><th>去哪复习</th></tr>
         <tr><td>Python / 语言</td><td>GIL、asyncio vs Node、上下文管理器、类型安全</td><td><a href="ch01-python.html">第 1 章</a> 5 题</td></tr>
         <tr><td>后端 / FastAPI</td><td>框架选型、Pydantic、SSE vs WebSocket、分层、鉴权</td><td><a href="ch02-fastapi.html">第 2 章</a> 6 题</td></tr>
         <tr><td>LLM 基础</td><td>temperature 原理、无状态多轮、本地 vs 云端、量化、usage 踩坑</td><td><a href="ch03-llm.html">第 3 章</a> 6 题</td></tr>
+        <tr><td class="y">Prompt / Context / Transformer / 多Agent</td><td>few-shot、CoT、结构化输出三防线、Context Engineering 四策略、self-attention 直觉、多 Agent 三模式、A2A 协议</td><td><a href="ch03b-prompt-context.html">第 3½ 章</a> 8 题</td></tr>
         <tr><td>RAG</td><td>chunk 策略、混合检索、RRF、rerank、CRAG、幻觉、多轮、扩展性</td><td><a href="ch04-rag.html">第 4 章</a> 8 题</td></tr>
         <tr><td>Agent</td><td>定义去魅、双协议、安全边界、错误处理、工具设计、落库、步数上限</td><td><a href="ch05-agent.html">第 5 章</a> 7 题</td></tr>
         <tr><td>MCP</td><td>协议本质、与 FC 关系、实现量、transport 选型、生产安全</td><td><a href="ch06-mcp.html">第 6 章</a> 5 题</td></tr>

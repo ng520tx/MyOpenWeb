@@ -7,6 +7,7 @@
     { file: "ch01-python.html", no: "01", title: "Python 速成", part: "第一部分 · 基础" },
     { file: "ch02-fastapi.html", no: "02", title: "FastAPI 后端解剖", part: "第一部分 · 基础" },
     { file: "ch03-llm.html", no: "03", title: "LLM 基础与协议归一", part: "第一部分 · 基础" },
+    { file: "ch03b-prompt-context.html", no: "03½", title: "Prompt 工程与上下文策略", part: "第一部分 · 基础" },
     { file: "ch04-rag.html", no: "04", title: "RAG 检索增强全链路", part: "第二部分 · 核心原理" },
     { file: "ch05-agent.html", no: "05", title: "Agent 工具调用循环", part: "第二部分 · 核心原理" },
     { file: "ch06-mcp.html", no: "06", title: "MCP 协议与 Server", part: "第二部分 · 核心原理" },

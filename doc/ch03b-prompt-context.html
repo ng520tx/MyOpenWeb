@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>03½ · Prompt 工程与上下文策略 · MyOpenWeb 修炼手册</title>
+<link rel="stylesheet" href="assets/tutorial.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <main class="content">
+    <article class="article">
+
+      <div class="ch-head">
+        <div class="ch-eyebrow"><span class="badge">CH 03½</span><span class="part">第一部分 · 基础</span></div>
+        <h1>Prompt 工程与上下文策略<br>—— 从「会调 API」到「驾驭模型」</h1>
+        <p class="lede">上一章你知道了模型是「下一个 token 的概率函数」，这一章讲<b>怎么用工程手段控制这个函数的输出</b>。四个主题：Prompt Engineering 方法论（面试出现率 ~50%）、Context Engineering 四策略（2026 新热词）、Transformer 内部直觉（面试 ~40%）、多 Agent 协作模式（~30% 且快速上升）。全程用你项目里的真实 prompt 做教材。</p>
+        <div class="ch-meta"><span>预计 4–5 小时</span><span>难度 ★★★☆☆</span><span>对应源码 agent_runner.py · rag.py · llm_tasks.py · retrieval_grader.py</span></div>
+      </div>
+
+      <div class="goals">
+        <h2>学完本章你能</h2>
+        <ul>
+          <li>区分 <b>zero-shot / few-shot / CoT / 结构化输出</b>四种 prompt 策略，说出何时用哪种</li>
+          <li>用 <b>Context Engineering 四策略</b>（Write / Select / Compress / Isolate）解释你项目的上下文管理</li>
+          <li>用前端直觉解释 <b>Transformer self-attention</b>——为什么上下文窗口有限、为什么 token 越多越贵</li>
+          <li>画出<b>多 Agent 三种模式</b>的架构图，并说清你的项目在这张图上的位置</li>
+        </ul>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 3½.1</span>Prompt Engineering：四种策略 + 项目实战</h2>
+      <p>Prompt Engineering 不是「写咒语」——它是<b>用自然语言编程</b>：你给模型的 prompt 就是它的指令集、运行环境和输入数据。掌握四种基本策略，几乎所有面试 prompt 题都有着落：</p>
+
+      <h3>① Zero-shot：零示例，直接下指令</h3>
+      <p>不给例子，靠指令本身让模型理解任务。适合模型对任务格式已有充分先验的场景。</p>
+      <pre data-lang="python" data-path="server/services/rag.py · RAG_INSTRUCTION（真实代码）">
+RAG_INSTRUCTION = """你是一个企业知识库问答助手。请严格依据下面提供的【参考资料】回答用户问题。
+规则：
+1. 只能使用参考资料中的信息回答，不要使用资料以外的知识，也不要编造。
+2. 如果参考资料中找不到答案，必须直接回答"知识库中没有找到相关信息"，不要猜测。
+3. 引用具体内容时，用方括号标注来源序号，例如 [1]、[2]。
+4. 回答使用与用户提问相同的语言。"""</pre>
+      <div class="code-notes"><ul>
+        <li>没有给示例对话，全靠规则约束行为——这是 zero-shot 的典型用法。</li>
+        <li>注意规则 2 给了模型「我不知道」的<b>出口</b>——没有出口模型就只能编。这条规则本身比任何 temperature 调参都管用。</li>
+        <li>规则 3 要求标注来源编号——这不只是格式要求，它在<b>强迫模型把生成过程锚定到具体资料</b>上，间接降低幻觉。</li>
+      </ul></div>
+
+      <h3>② Few-shot：给几个例子，模型照着学</h3>
+      <p>在 prompt 里放 1–5 个「输入→输出」示例。适合输出格式特殊或模型容易走偏的场景。</p>
+      <pre data-lang="python" data-path="server/services/agent_runner.py · AGENT_INSTRUCTION（真实代码，节选）">
+如果需要调用工具，输出 Open WebUI 风格的 tool_calls 数组：
+{{"tool_calls":[{{"name":"工具名","parameters":{{...}}}}]}}
+
+示例：
+{{"tool_calls":[{{"name":"get_current_time","parameters":{{}}}}]}}
+{{"tool_calls":[{{"name":"calculator","parameters":{{"expression":"(12 + 8) * 3 / 2"}}}}]}}
+
+如果可以最终回答，输出：
+{{"action":"final","answer":"最终回答内容"}}</pre>
+      <div class="code-notes"><ul>
+        <li>两条示例 = few-shot，让模型看到<b>具体的 JSON 形状</b>而不是抽象描述——prompt 里「做给我看」永远比「告诉我」有效。</li>
+        <li>第一条示例无参数、第二条有参数——两种分支各一个，覆盖典型用法。</li>
+        <li>花括号双写 <code>{{</code> 是 Python f-string 的转义需求，模型看到的是正常 JSON。</li>
+      </ul></div>
+
+      <h3>③ Chain-of-Thought（CoT）：让模型「先想再答」</h3>
+      <p>直接问「答案是什么」→ 模型跳到结论（容易错）。加一句「请先分步推理，再给出最终结论」→ 模型的中间推理过程强迫它逻辑自洽，准确率显著提升。</p>
+      <div class="analogy">
+        <div class="tag">前端类比</div>
+        <p>CoT 就像 console.log 调试法：你让函数把中间变量打印出来而不是直接 return 最终结果——中间步骤可见后，你能立刻发现逻辑在哪一步岔了。给模型空间「思考」，本质是把黑盒推理变成白盒链条。</p>
+      </div>
+      <p>你项目里的真实 CoT 用例——Grader 的 prompt 就是在引导模型先判断再输出：</p>
+      <pre data-lang="python" data-path="server/services/retrieval_grader.py · GRADER_INSTRUCTION（真实代码）">
+GRADER_INSTRUCTION = """你是检索质量评估器。判断【候选资料】中是否包含【用户问题】的答案信息。
+判定标准（宽松）：只要任意一个片段包含能回答问题的关键信息，就算足够。
+只输出一个 JSON 对象，不要任何解释：
+- 资料中有答案：{"sufficient": true}
+- 所有片段都与问题无关：{"sufficient": false, "followup_query": "换一种表述的补充检索查询"}
+
+followup_query 必须换一种表述，禁止重复原问题：
+把口语换成企业文档里会出现的书面术语与关键词。
+例：「新版本什么时候才能上线」→「发布窗口 发布时间 变更单」"""</pre>
+      <div class="code-notes"><ul>
+        <li>先给判定标准（推理框架）→ 再给两种输出形态（分支决策）→ 最后给改写示例（few-shot 辅助）——三种策略混用是高质量 prompt 的常态。</li>
+        <li><code>temperature=0</code> 是这类「判断型」prompt 的标配——我们要确定性，不要创造性。</li>
+      </ul></div>
+
+      <h3>④ 结构化输出：让模型像 API 一样返回 JSON</h3>
+      <p>LLM 天性是写自由文本（「答案是 42，因为...」），但工程上你需要程序可解析的结构。三种强制手段：</p>
+      <table class="cmp-table">
+        <tr><th>手段</th><th>原理</th><th>可靠性</th><th>本项目实践</th></tr>
+        <tr><td>prompt 约束</td><td>在指令里写「只输出 JSON，不要解释」</td><td>中（小模型经常不守）</td><td>AGENT_INSTRUCTION + 防御解析 <code>_parse_agent_json</code></td></tr>
+        <tr><td class="y">response_format</td><td>OpenAI API 的 <code>response_format: {"type": "json_object"}</code></td><td>高（推理层约束解码）</td><td>GRADER / FOLLOW_UPS 可启用</td></tr>
+        <tr><td class="y">function calling</td><td>工具的 JSON Schema 即输出 Schema</td><td>最高（structured output）</td><td>native 协议的 Agent 路径</td></tr>
+      </table>
+      <div class="pitfall">
+        <div class="tag">面试高频坑</div>
+        <p>「为什么模型明明被告知只输出 JSON 还是会带闲聊？」——因为 prompt 约束只是概率倾向，不是硬约束；解码时每个 token 仍然是从概率分布采样的。真正的硬约束在推理层（constrained decoding / guided generation）：vLLM、Ollama 都支持 <code>response_format</code>，它在采样阶段屏蔽非法 token。你的项目里用了三道防线：prompt 约束 + 防御解析 + 降级兜底（解析失败把原文当答案）。</p>
+      </div>
+
+      <h3>项目 prompt 工程方法论小结</h3>
+      <p>回看你项目里的所有 prompt，抽象出共同模式——面试讲这段可以显示方法论：</p>
+      <table class="cmp-table">
+        <tr><th>prompt</th><th>文件</th><th>用了哪些策略</th><th>temperature</th></tr>
+        <tr><td>RAG 回答指令</td><td>rag.py</td><td>zero-shot + 规则清单 + 拒答出口</td><td>默认 0.7</td></tr>
+        <tr><td>Agent 工具协议</td><td>agent_runner.py</td><td>few-shot（两条示例）+ JSON 约束</td><td>默认 0.7</td></tr>
+        <tr><td>Grader 检索评分</td><td>retrieval_grader.py</td><td>CoT + few-shot + JSON 约束</td><td>0</td></tr>
+        <tr><td>标题生成</td><td>llm_tasks.py</td><td>zero-shot + 格式约束</td><td>0.1</td></tr>
+        <tr><td>追问建议</td><td>llm_tasks.py</td><td>few-shot（JSON 数组示例）</td><td>0.3</td></tr>
+      </table>
+      <div class="keypoint">
+        <div class="tag">面试话术</div>
+        <p>「我项目里有 5 种不同的 prompt，用了 zero-shot、few-shot、CoT 三种策略的组合，temperature 按任务类型分级：判断/抽取 0–0.1、结构化生成 0.3、创作/对话 0.7。每个 prompt 都配了防御式解析和降级——prompt 约束是概率的，工程兜底是确定性的。」</p>
+      </div>
+
+      <h3>Prompt 迭代方法论：怎么越改越好？</h3>
+      <p>面试追问「你写了 prompt，效果不好怎么办？」——不能答「多试几遍」，要有系统方法：</p>
+      <table class="cmp-table">
+        <tr><th>步骤</th><th>做什么</th><th>你项目的实践</th></tr>
+        <tr><td class="y">1. 定基线</td><td>先跑评测集拿量化分数，没有数字就没有「好不好」</td><td>40 题 Hit@K / MRR 基线；Grader 和 Agent 的准确率在日志里</td></tr>
+        <tr><td class="y">2. 分析 bad case</td><td>看失败样本，分类：格式错？拒答多？幻觉？工具选错？</td><td>评测脚本自动输出 per-query 结果，可直接看哪条错了</td></tr>
+        <tr><td class="y">3. 改一点跑一轮</td><td>每次只改一个变量（增一条规则 / 加一条示例 / 调 temperature），重跑评测对比</td><td>AGENT_INSTRUCTION 从 0 示例→1 示例→2 示例，JSON 合规率逐次上涨</td></tr>
+        <tr><td class="y">4. 版本化</td><td>prompt 是代码常量而非配置文件——改动走 git diff，能回退能追溯</td><td>RAG_INSTRUCTION / AGENT_INSTRUCTION / GRADER_INSTRUCTION 全在 Python 文件里，git 直接管</td></tr>
+      </table>
+      <div class="keypoint">
+        <div class="tag">面试话术</div>
+        <p>「我的 prompt 迭代是评测驱动的：改之前跑基线分、改之后跑回归分，没有分数就没有发言权。每个 prompt 都是 Python 常量，改动走 git diff——谁改了什么、什么时候改的、效果是变好还是变差，全有记录。不用独立的 prompt 管理平台是因为体量还小，但方法论是一样的：常量文件 ≈ prompt 注册中心，评测脚本 ≈ 自动化回归，git log ≈ 版本历史。」</p>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 3½.2</span>Context Engineering：管好模型的「工作台面」</h2>
+      <p>2026 年行业新共识：Prompt Engineering 只管「写什么指令」，<b>Context Engineering</b> 管「模型看到的全部内容怎么组装」。模型的上下文窗口是一张有限大小的工作台——你要在上面摆：系统指令、对话历史、检索资料、工具说明书、工具结果... 怎么取舍、怎么排列、怎么压缩，就是 Context Engineering。</p>
+
+      <div class="analogy">
+        <div class="tag">前端类比</div>
+        <p>上下文窗口 = 浏览器的 viewport，你在做「响应式布局」：空间充裕时全部展示，空间紧张时省略次要元素、合并重复信息、折叠详情。RAG 塞资料太多撑爆窗口 → 相当于组件 overflow 被裁剪，用户看不到关键内容。Context Engineering 就是为 LLM 的 viewport 做的「信息架构」。</p>
+      </div>
+
+      <p>行业把策略归纳为四个动作，你的项目每个都有真实实现：</p>
+      <table class="cmp-table">
+        <tr><th>策略</th><th>含义</th><th>你项目的实现</th></tr>
+        <tr><td class="y">Write</td><td><b>往上下文里写入</b>新信息——模型本来不知道的东西</td><td>RAG 把检索到的资料注入 system prompt（<code>build_rag_system_prompt</code>）；Agent 把工具执行结果回填 messages</td></tr>
+        <tr><td class="y">Select</td><td><b>筛选</b>最相关的内容放进去，扔掉不相关的</td><td>检索的 <code>top_k</code> 裁剪——不是把知识库全塞进 prompt，而是只放最相关的 4 片；Agent 工具说明书只挂注册工具的</td></tr>
+        <tr><td class="y">Compress</td><td><b>压缩</b>信息密度，用更少 token 传达同样内容</td><td>query rewrite 把多轮历史压缩成一句自包含查询；标题生成限制 16 字（<code>TITLE_INSTRUCTION</code>）</td></tr>
+        <tr><td class="y">Isolate</td><td><b>隔离</b>不同类型的信息，防止串扰</td><td>system prompt 与 user 消息分离（角色隔离）；RAG 资料用 <code>【参考资料】</code> 标签包裹（来源隔离）；Agent 工具结果用 <code>role: "tool"</code> 区别于对话</td></tr>
+      </table>
+
+      <p>看一个完整的上下文组装过程——Agent 模式下 system prompt 的四段拼接：</p>
+      <pre data-lang="python" data-path="server/services/agent_runner.py（真实代码，节选）">
+prompt_parts = [
+    base_system_prompt,       # ① 用户自定义人设（可选）
+    memory_context,           # ② 长期记忆（Isolate：独立段落）
+    agent_system_prompt,      # ③ Agent 协议 + 工具说明书（Write：注入工具信息）
+    knowledge_guidance,       # ④ 如有知识库，追加 RAG 指导
+]
+system_prompt = "\n\n".join(part for part in prompt_parts if part)</pre>
+      <div class="code-notes"><ul>
+        <li>四段各自独立（Isolate）、按优先级排列（Select：没有记忆就跳过）、每段内容精简（Compress：工具只给 JSON Schema 不给实现代码）。</li>
+        <li>这段代码就是 Context Engineering 的<b>工作台布局</b>——面试用四策略术语讲这段代码，既展示理论认知又展示实现能力。</li>
+      </ul></div>
+
+      <div class="keypoint">
+        <div class="tag">上下文窗口的成本直觉</div>
+        <p>上下文不是免费的：prompt_tokens 按量计费（或占用推理时间），且 attention 的计算量是 O(n^2)——token 翻倍，推理成本翻四倍。所以 Select 和 Compress 不是「有空再做」的优化，而是<b>系统性价比的核心杠杆</b>。你项目里 <code>top_k=4</code> 而不是 40、<code>MAX_CONTEXT_CHARS=800</code> 的截断、query rewrite 替代带全历史检索——全是这个成本直觉在驱动。</p>
+      </div>
+
+      <h2 class="sec-t"><span class="no">SECTION 3½.3</span>Transformer 直觉：为什么窗口有限、为什么 token 越多越贵</h2>
+      <p>面试不要求你推 attention 的数学公式，但要求你能用直觉解释「模型内部在干什么」。一张前端类比就够：</p>
+
+      <div class="analogy">
+        <div class="tag">前端类比：Self-Attention ≈ 全表 JOIN</div>
+        <p>想象一张 N 行的数据库表，每行是一个 token。Self-attention 做的事情等价于：<b>每一行对所有 N 行做一次相关性查询</b>（「你和我有多相关？」），然后按相关性加权聚合所有行的信息。N 行 × N 行 = <b>N^2 次比较</b>。这就是为什么上下文窗口（N）翻倍，计算量翻四倍，推理延迟和成本都显著增长。</p>
+      </div>
+
+      <h3>Q / K / V —— 用搜索引擎的直觉理解</h3>
+      <p>Attention 里的三个矩阵有直觉对应物：</p>
+      <table class="cmp-table">
+        <tr><th>矩阵</th><th>全称</th><th>直觉</th><th>搜索引擎类比</th></tr>
+        <tr><td class="y">Q</td><td>Query</td><td>「我在找什么？」</td><td>用户输入的搜索词</td></tr>
+        <tr><td class="y">K</td><td>Key</td><td>「我能提供什么？」</td><td>每个网页的标题/摘要</td></tr>
+        <tr><td class="y">V</td><td>Value</td><td>「我的实际内容」</td><td>每个网页的正文</td></tr>
+      </table>
+      <p>流程：每个 token 生成一个 Q（搜索词），对所有 token 的 K（标题）做点积得到相关性分数（≈ 搜索排名），然后按分数加权取 V（正文）——<b>聚合出「与我最相关的上下文信息」</b>。这个过程叠 12–80 层（模型深度），每层学到不同粒度的关联。</p>
+
+      <div class="keypoint">
+        <div class="tag">三个面试金句</div>
+        <p>①「Self-attention 让每个 token 看到所有其他 token，理论上一步就能捕获任意距离的依赖——这是 Transformer 碾压 RNN 的根本原因（RNN 靠逐步传递，远距离信息衰减严重）。」</p>
+        <p>②「上下文窗口限制 = attention 矩阵的维度上限。8K 窗口意味着最多 8K×8K ≈ 6400 万次点积，128K 窗口是 128K×128K ≈ 160 亿次——所以长上下文模型显著更贵。」</p>
+        <p>③「这也解释了 RAG 为什么优于把资料全塞进长上下文：top_k=4 只加几百 token，延迟和成本几乎不变；全塞 5 万字进 128K 窗口，延迟和成本都爆炸。RAG 是用检索换 attention 预算。」</p>
+      </div>
+
+      <h3>多头注意力（Multi-Head）——一句话带过</h3>
+      <p>一组 Q/K/V 只能学一种关联模式。把 Q/K/V 拆成 8–128 组（头），每组独立学不同的关联（有的学语法、有的学指代、有的学语义），最后拼起来——就像前端做 A/B 测试，多组实验并行跑，综合取最佳。面试提到「多头」二字即可，不需要展开。</p>
+
+      <h2 class="sec-t"><span class="no">SECTION 3½.4</span>多 Agent 协作与协议演进</h2>
+      <p>你的项目是<b>单 Agent 多工具</b>——一个 while 循环调度 8 个工具。面试官高概率问：「更复杂的任务怎么办？多 Agent 了解吗？」三种模式各一句话说清：</p>
+
+      <table class="cmp-table">
+        <tr><th>模式</th><th>核心思想</th><th>适用</th><th>框架实现</th></tr>
+        <tr><td class="y">Sequential Pipeline</td><td>Agent 们像流水线工人：A 的输出直接是 B 的输入，顺序固定</td><td>步骤确定的工作流（如 研究→写稿→审稿）</td><td>LangGraph 线性图 / CrewAI sequential</td></tr>
+        <tr><td class="y">Supervisor</td><td>一个 Boss Agent 做规划/分派，Worker Agent 各自执行子任务，结果汇报给 Boss 整合</td><td>任务可分解但子任务间需要协调</td><td>LangGraph supervisor node / CrewAI hierarchical</td></tr>
+        <tr><td class="y">Peer-to-Peer Swarm</td><td>Agent 之间平等对话，互相「交接」（handoff），没有固定控制者</td><td>角色灵活切换的场景（如客服转技术专家再转售后）</td><td>OpenAI Agents SDK handoff / LangGraph 多边图</td></tr>
+      </table>
+
+      <pre data-lang="bash" data-path="三种多 Agent 模式架构图">
+模式 1：Sequential Pipeline（流水线）
+┌─────────┐    ┌─────────┐    ┌─────────┐
+│ Agent A  │───▶│ Agent B  │───▶│ Agent C  │──▶ 最终输出
+│ 研究员   │    │ 写作者   │    │ 审核员   │
+└─────────┘    └─────────┘    └─────────┘
+
+模式 2：Supervisor（老板分派）
+              ┌──────────────┐
+              │  Boss Agent  │  ◀── 接收任务 / 整合结果
+              │  规划 + 分派  │
+              └──┬───┬───┬───┘
+                 │   │   │
+          ┌──────┘   │   └──────┐
+          ▼          ▼          ▼
+    ┌──────────┐┌──────────┐┌──────────┐
+    │ Worker A ││ Worker B ││ Worker C │
+    │ 检索专家 ││ 分析专家 ││ 报告专家 │
+    └──────────┘└──────────┘└──────────┘
+
+模式 3：Peer-to-Peer Swarm（点对点交接）
+    ┌──────────┐  handoff   ┌──────────┐
+    │ Agent 客服│ ─────────▶│ Agent 技术│
+    └──────────┘            └─────┬────┘
+         ▲                        │ handoff
+         │ handoff                ▼
+    ┌────┴─────┐            ┌──────────┐
+    │ Agent 售后│ ◀──────────│ Agent 财务│
+    └──────────┘            └──────────┘
+
+★ 你的项目：单 Agent 多工具（模式 0 · 起步正确）
+    ┌─────────────────────────────┐
+    │         Agent 循环           │
+    │  ┌──────┐  决策  ┌───────┐  │
+    │  │ LLM  │──────▶│工具 x8 │  │
+    │  └──▲───┘       └───┬───┘  │
+    │     └── 结果回填 ────┘      │
+    └─────────────────────────────┘</pre>
+
+      <div class="analogy">
+        <div class="tag">前端类比</div>
+        <p>Pipeline ≈ Express 中间件链（请求顺序穿过每个中间件）。Supervisor ≈ React 父组件 useState 管状态，分发 props 给子组件各自渲染。Swarm ≈ 微前端里多个独立应用通过消息总线互相通信，谁接管页面看路由。</p>
+      </div>
+
+      <p>你项目的定位和演进口径：</p>
+      <div class="keypoint">
+        <div class="tag">面试话术</div>
+        <p>「我目前是单 Agent 多工具——一个循环调度 8 个工具，覆盖运维场景 90% 的需求，且循环有界、安全可控。这是 Anthropic《Building Effective Agents》推荐的出发点：先用简单循环，复杂度不够了再升级编排。如果要处理『研究→写报告→审核』这种多阶段任务，我会升到 Supervisor 模式：一个规划 Agent 把任务拆成子任务，每个子任务分发给专用 Worker，各自的工具集和 prompt 互不干扰。LangGraph 的 StateGraph + 条件边直接支持这个模式。」</p>
+      </div>
+
+      <h3>协议演进：MCP → A2A</h3>
+      <p>第 6 章讲的 MCP 解决「应用 ↔ 工具」的连接。下一步是 <b>A2A（Agent-to-Agent Protocol）</b>：解决「Agent ↔ Agent」的连接——不同厂商/团队的 Agent 之间如何发现彼此、交换任务、协商能力。Google 在 2025 年提出，目前还是早期阶段。</p>
+      <table class="cmp-table">
+        <tr><th></th><th>MCP</th><th>A2A</th></tr>
+        <tr><td>连接谁</td><td>应用（Agent） ↔ 工具/数据</td><td>Agent ↔ Agent</td></tr>
+        <tr><td>核心动词</td><td>tools/list, tools/call</td><td>agent/discover, tasks/send</td></tr>
+        <tr><td>2026 状态</td><td class="y">生产可用，事实标准</td><td>早期草案，概念验证</td></tr>
+        <tr><td>你的口径</td><td>已实现 MCP Server</td><td>了解协议方向，等生态成熟再接入</td></tr>
+      </table>
+
+      <div class="try-it">
+        <div class="tag">动手实验 · 体会 prompt 策略的差异</div>
+        <p>对同一个问题，分别用 zero-shot 和 CoT 提问，观察回答质量差异：</p>
+        <pre data-lang="bash" data-path="WSL 终端（Ollama 需在跑）">
+# Zero-shot：直接问
+curl -sN http://localhost:8000/api/chat/completions \
+  -H "Content-Type: application/json" -d '{
+  "model": "qwen3:4b", "stream": false,
+  "messages": [{"role": "user", "content": "如果一个系统每天处理 100 万请求，每次请求消耗 500 prompt tokens，按 $0.003/1K tokens 计费，月成本是多少？"}]
+}' | python -m json.tool | grep content
+
+# CoT：要求先分步推理
+curl -sN http://localhost:8000/api/chat/completions \
+  -H "Content-Type: application/json" -d '{
+  "model": "qwen3:4b", "stream": false,
+  "messages": [{"role": "user", "content": "如果一个系统每天处理 100 万请求，每次请求消耗 500 prompt tokens，按 $0.003/1K tokens 计费，月成本是多少？请先分步计算，再给出最终答案。"}]
+}' | python -m json.tool | grep content</pre>
+        <p class="muted">后者的计算过程会更清晰、准确率通常更高——这就是 CoT 的工程价值。</p>
+      </div>
+
+      <div class="iv-zone">
+        <div class="zone-head"><span class="ic">面</span><h2>面试官视角 · 本章问答</h2><span class="cnt"></span></div>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q1</span>什么是 few-shot prompting？你项目里用了吗？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「在 prompt 里给几个输入-输出示例让模型照着学。我项目里两处用了：Agent 的 AGENT_INSTRUCTION 放了两条工具调用 JSON 示例（无参数和有参数各一条）；追问建议的 FOLLOW_UPS_INSTRUCTION 放了一个 JSON 数组示例。效果是显著降低格式出错率——特别是本地小模型，看过例子和没看过的 JSON 合规率差距有 30%+。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q2</span>什么是 Chain-of-Thought？什么场景适用？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「让模型先输出推理过程再给结论——『展示你的工作步骤』。原理是中间 token 承载了推理状态，直接跳到结论则推理链断裂。适用场景：数学计算、逻辑判断、多步比较。我的 Grader prompt 本质就是 CoT 思想：先定判定标准、再按标准判定、最后输出 JSON——给模型一个思考框架。不适用：简单检索、格式转换这类无推理需求的任务，CoT 只会增加 token 消耗。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q3</span>怎么让 LLM 稳定输出 JSON？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「三道防线递进：<b>① prompt 约束</b>——指令里写『只输出 JSON 对象，不要解释』+ 示例；<b>② 推理层硬约束</b>——OpenAI 兼容 API 传 response_format: {"type": "json_object"}，推理时每个 token 都限制在合法 JSON 范围内；<b>③ 工程兜底</b>——解析器先剥 ```json 围栏、再正则抠 JSON、再 try parse，全失败就把原文当自由文本降级处理。prompt 约束是概率的，推理约束是硬的，工程兜底是确定性的——三层不是或的关系，是叠加的。我项目里 _parse_agent_json 就是第三层，解析失败率已经降到接近零。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q4</span>什么是 Context Engineering？和 Prompt Engineering 什么关系？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「Prompt Engineering 管『指令怎么写』；Context Engineering 管『模型看到的全部内容怎么组装』——不只是指令，还包括对话历史、检索资料、工具说明、工具结果的编排。四个策略：Write（注入新信息，如 RAG 塞资料）、Select（筛选相关内容，如 top_k 裁剪）、Compress（压缩信息，如 query rewrite 替代全历史）、Isolate（隔离不同类型，如 system/user/tool 角色分离）。我的项目里 agent_runner 组装 system prompt 的那段代码——四段拼接、按需跳过、独立段落——就是 Context Engineering 四策略的具体落地。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q5</span>Transformer 的 self-attention 是什么？用直觉解释一下。<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「每个 token 对序列里所有其他 token 做一次相关性查询：用自己的 Query 向量去和每个 token 的 Key 向量做点积得到注意力分数，再按分数加权聚合所有 token 的 Value 向量——输出是『与我最相关的上下文信息的加权混合』。直觉上就是全表 JOIN：N 个 token × N 个 token = N^2 次比较。这解释了两件事：为什么 Transformer 碾压 RNN——一步就能看到任意距离，不用逐步传递；为什么上下文窗口有成本上限——8K 窗口是 6400 万次比较，128K 是 160 亿次，延迟和成本都是二次方增长。多头注意力是把这个过程拆成 8-128 组并行跑，每组学不同维度的关联。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q6</span>为什么 RAG 比直接用长上下文窗口塞全文好？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「三个维度：<b>成本</b>——top_k=4 大约加 2000 token，按 $0.003/1K 是 $0.006；5 万字全塞是 5 万+ token，成本 25 倍；<b>延迟</b>——attention 是 O(n^2)，token 翻 25 倍，推理延迟翻几百倍；<b>准确率</b>——实测『大海捞针』任务里长上下文模型对中段内容的注意力衰减显著（lost-in-the-middle 效应），RAG 只塞最相关的几片反而信噪比更高。当然长上下文也有价值：整本书阅读理解、完整代码文件分析——这些场景信息不可裁剪。两者不是替代关系，是适用场景不同。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q7</span>多 Agent 和单 Agent 多工具有什么区别？什么时候需要多 Agent？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「单 Agent 多工具——一个循环、一套 prompt、一个决策者调度多个工具。够用的场景：工具间无复杂依赖、决策链短（3 步以内）、单一角色足以覆盖。我的项目就是这种。多 Agent——多个独立 Agent 各有专用 prompt 和工具集，通过编排层协调。需要它的信号：任务可分解成异构子任务（研究 vs 写作 vs 审核，prompt 和工具完全不同）、需要不同专家角色的深度推理、子任务间需要检查点和人工审批。三种模式：Pipeline 流水线、Supervisor 老板分派、Swarm 点对点交接。Anthropic 的建议是：先从单循环+好工具开始，复杂度不够了再升级编排，不要过早引入框架复杂度。」</p>
+          </div>
+        </details>
+
+        <details class="iv-card">
+          <summary><span class="q-no">Q8</span>A2A 协议听说过吗？和 MCP 什么关系？<span class="chev">▸</span></summary>
+          <div class="a">
+            <p>「Google 2025 年提出的 Agent-to-Agent Protocol，解决跨组织/跨厂商的 Agent 之间如何发现和协作。MCP 管的是应用与工具的连接（应用调工具），A2A 管的是 Agent 与 Agent 的连接（Agent 给 Agent 派任务）。层次递进：MCP 让一个 Agent 能用更多工具，A2A 让多个 Agent 能组成团队。2026 年年中 A2A 还在草案阶段，没有生产级 SDK；MCP 已经是事实标准。我的口径：了解协议方向，等生态成熟再接入——先把单 Agent + MCP 做扎实，是更务实的优先级。」</p>
+          </div>
+        </details>
+      </div>
+
+      <div class="recap">
+        <div class="r-head">本章小结 · 装进口袋的 7 句话</div>
+        <div class="r-body"><ul>
+          <li>Prompt 四策略：<b>zero-shot（直接指令）/ few-shot（示例教学）/ CoT（先想再答）/ 结构化输出（JSON 约束）</b>，按任务复杂度和格式要求选择组合。</li>
+          <li>结构化输出三道防线：prompt 约束（概率）→ response_format（硬约束）→ 防御解析 + 降级（确定性）。</li>
+          <li>Context Engineering 四策略：<b>Write（注入）/ Select（筛选）/ Compress（压缩）/ Isolate（隔离）</b>——管理模型「工作台面」的信息架构。</li>
+          <li>上下文窗口 = attention 预算：token 翻倍，成本翻四倍（O(n^2)）。top_k 和 query rewrite 本质是<b>用检索换 attention 预算</b>。</li>
+          <li>Self-attention = 每个 token 对所有 token 做相关性查询（Q×K→分数→加权 V）；Transformer 胜 RNN 因为一步到位看全局。</li>
+          <li>多 Agent 三模式：<b>Pipeline 流水线 / Supervisor 老板分派 / Swarm 点对点交接</b>。单 Agent 多工具是正确的起步，复杂度不够了再升级。</li>
+          <li>MCP 连工具、A2A 连 Agent——两个协议解决连接层的不同段，MCP 已成熟，A2A 早期。</li>
+        </ul></div>
+      </div>
+
+      <div class="ch-nav" data-auto></div>
+    </article>
+  </main>
+</div>
+<script src="assets/tutorial.js"></script>
+</body>
+</html>
