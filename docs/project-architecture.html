@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>项目架构 · MyOpenWeb 工程文档</title>
+<meta name="description" content="MyOpenWeb 项目架构：技术栈、目录结构、数据流、模块说明、数据库设计、Android 壳与迭代路线">
+<link rel="stylesheet" href="assets/dossier.css">
+</head>
+<body>
+<div class="blueprint"></div>
+<div class="glow glow-a"></div>
+<div class="glow glow-b"></div>
+
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <main class="content">
+    <article class="article">
+
+      <header class="doc-head">
+        <div class="scanline"></div>
+        <div class="doc-kicker"><span class="line"></span><span>DOC-01 · PROJECT ARCHITECTURE</span></div>
+        <h1>项目架构<br>—— 从前端直连到<em>分层可演进</em>的全栈骨架</h1>
+        <p class="lede">技术栈、目录结构、核心数据流、模块拆解、数据库设计与 Android 壳工程——一份读完即可上手改代码的工程地图。</p>
+        <div class="doc-meta">
+          <span>范围 <b>全栈</b></span>
+          <span>后端 <b>FastAPI + SQLite / pgvector</b></span>
+          <span>前端 <b>React 18 + TS 5</b></span>
+          <span>移动端 <b>Kotlin WebView</b></span>
+        </div>
+      </header>
+
+      <h2 class="reveal"><span class="no"></span>项目定位</h2>
+      <p>基于 Open WebUI 拆解的个人版 AI App 骨架，目标是做成「企业研发/运维 AI Copilot 工作台」的求职作品。当前架构已经从「前端直连模型服务」升级为：</p>
+      <ul>
+        <li>React H5 聊天页</li>
+        <li>Android WebView 壳</li>
+        <li>FastAPI 本地后端</li>
+        <li>SQLite 对话/配置/Agent 日志/记忆/文件/知识库持久化</li>
+        <li>原生 STT/TTS/文件桥接</li>
+        <li>Ollama / OpenAI Compatible 模型接入</li>
+        <li>文件落盘 + 文本抽取（txt/md/pdf/docx，可选 PaddleOCR）</li>
+        <li>自研 RAG 知识库（切片 + 向量化 + 混合检索 BM25/向量 RRF 融合 + 可选 bge-reranker 重排 + 引用来源 + 无答案拒答）</li>
+        <li>检索质量评测（40 条 QA，Hit@K / MRR / 延迟参数对照，<code>server/eval/</code>）</li>
+        <li>研发/运维 Agent 工具（日志分析、Git diff 摘要、工单总结、测试用例生成、知识库检索）</li>
+        <li>pytest 单元测试 + GitHub Actions CI + Docker 一键部署</li>
+      </ul>
+      <div class="callout info">
+        <span class="ic">◈</span>
+        <div class="bd">
+          <span class="t">定位说明</span>
+          <p>当前阶段的目标不是做成 Dify 那样的工作流平台，而是把 RAG 知识库和真实研发/运维 Agent 工具全部自研落地，便于面试讲清底层。RAG / Agent 功能模块的产品化说明见 <a href="rag-agent-copilot.html">D-02 · RAG + Agent 模块</a>。</p>
+        </div>
+      </div>
+
+      <h2 class="reveal"><span class="no"></span>技术栈</h2>
+      <table>
+        <tr><th>层级</th><th>技术</th><th>版本</th></tr>
+        <tr><td>前端构建</td><td>Vite</td><td>5.x</td></tr>
+        <tr><td>前端框架</td><td>React</td><td>18.x</td></tr>
+        <tr><td>前端语言</td><td>TypeScript</td><td>5.x</td></tr>
+        <tr><td>样式</td><td>Tailwind CSS</td><td>3.x</td></tr>
+        <tr><td>状态管理</td><td>Zustand</td><td>4.x</td></tr>
+        <tr><td>Markdown</td><td>react-markdown + remark-gfm</td><td>9.x</td></tr>
+        <tr><td>代码高亮</td><td>react-syntax-highlighter</td><td>16.x</td></tr>
+        <tr><td>流式解析</td><td>eventsource-parser</td><td>1.x</td></tr>
+        <tr><td>本地后端</td><td>FastAPI</td><td>0.136.x</td></tr>
+        <tr><td>后端语言</td><td>Python</td><td>3.12.x</td></tr>
+        <tr><td>数据库</td><td>SQLite</td><td>Python 内置 sqlite3（向量存 JSON，BM25 用 FTS5）</td></tr>
+        <tr><td>向量后端（可选）</td><td>PostgreSQL + pgvector</td><td><code>MYOPENWEB_VECTOR_BACKEND=pgvector</code> 切换</td></tr>
+        <tr><td>Rerank（可选）</td><td>sentence-transformers CrossEncoder</td><td>bge-reranker-base</td></tr>
+        <tr><td>测试 / CI</td><td>pytest + vitest + ruff + eslint + GitHub Actions</td><td>见 <code>.github/workflows/ci.yml</code></td></tr>
+        <tr><td>部署</td><td>Docker 多阶段构建 + docker-compose</td><td>见 <code>Dockerfile</code></td></tr>
+        <tr><td>Android</td><td>Kotlin + WebView</td><td>API 26+</td></tr>
+        <tr><td>包管理</td><td>pnpm</td><td>10.x</td></tr>
+        <tr><td>Node</td><td>Node.js</td><td>18.18.0（见 <code>.nvmrc</code>）</td></tr>
+      </table>
+
+      <h2 class="reveal"><span class="no"></span>目录结构</h2>
+      <pre data-lang="text" data-path="MyOpenWeb/ 仓库根目录">
+MyOpenWeb/
+├── docs/                        # 工程文档站（本系列）+ 架构展示页
+├── doc/                         # 《MyOpenWeb 修炼手册》教材（10+1 章）
+├── server/
+│   ├── data/                    # SQLite 数据目录（运行后生成）
+│   ├── repositories/            # SQLite 读写层
+│   ├── routers/                 # FastAPI 路由
+│   ├── schemas/                 # Pydantic 模型
+│   ├── services/                # Provider 代理 / RAG / Agent / 协议转换
+│   ├── vectorstores/            # VectorStore 抽象：SQLite（默认）/ pgvector
+│   ├── tests/                   # pytest（17 个测试文件）
+│   ├── eval/                    # 检索质量评测集与报告
+│   ├── mcp_server/              # MCP Server（stdio）
+│   ├── db.py                    # SQLite 初始化与连接
+│   ├── main.py                  # FastAPI 应用入口
+│   └── requirements.txt         # Python 依赖
+├── src/
+│   ├── apis/
+│   │   ├── chat.ts              # 统一走本地后端 /api/chat/completions
+│   │   ├── chats.ts             # SQLite 对话同步接口
+│   │   ├── config.ts            # Provider 配置同步接口
+│   │   ├── models.ts            # 通过本地后端获取模型列表
+│   │   └── streaming.ts         # SSE / NDJSON 解析工具
+│   ├── bridge/
+│   │   └── moaBridge.ts         # Android WebView 桥接
+│   ├── components/
+│   │   ├── chat/  ├── knowledge/  ├── settings/  └── sidebar/
+│   ├── constants/  ├── pages/  ├── stores/  ├── types/  ├── utils/
+│   ├── App.tsx
+│   ├── main.tsx
+│   └── index.css
+├── android/
+│   └── app/src/main/java/com/myopenweb/app/
+│       ├── MainActivity.kt
+│       ├── WebViewContainer.kt
+│       ├── bridge/MoaBridge.kt
+│       ├── native_/NativeSTT.kt
+│       ├── native_/NativeTTS.kt
+│       ├── native_/NativeFilePicker.kt
+│       └── native_/SafeAreaHelper.kt
+├── package.json
+├── vite.config.ts               # /api 代理到 8000
+└── .nvmrc</pre>
+
+      <h2 class="reveal"><span class="no"></span>总体架构</h2>
+      <pre data-lang="text" data-path="三层拓扑：H5 → FastAPI → 存储/模型">
+H5 Frontend (React)
+  ├─ UI: Chat / Sidebar / Settings / Knowledge
+  ├─ State: Zustand + localStorage cache
+  ├─ Bridge: STT / TTS / File / SafeArea
+  └─ API: /api/models /api/chat/completions /api/agent/completions /api/chats /api/config/provider
+                │
+                ▼
+Local Backend (FastAPI)
+  ├─ Config Router: Provider + embedding 配置读写（API key 脱敏返回）
+  ├─ Provider Verify: 连接自检与模型探测
+  ├─ Models Router: 模型列表代理
+  ├─ Chat Router: 聊天代理，统一输出 OpenAI SSE；可选 knowledge_id 触发 RAG 注入
+  │               检索链路异常时降级为普通回答并发 retrieval_warning 帧
+  ├─ Agent Router: 工具调用循环（含 search_knowledge，轮数可配置）
+  ├─ Chats Router: SQLite 对话存取
+  ├─ Files Router: 上传/列表/详情/删除，文本抽取后落盘
+  ├─ Knowledge Router: 知识库 CRUD、绑定文件、建立索引、调试检索
+  ├─ RAG Service: 切片 + 批量向量化 + RRF 融合 / rerank / 自纠错
+  ├─ VectorStore: SQLite numpy 余弦（默认）/ pgvector SQL 余弦，env 切换
+  ├─ Embeddings Service: Ollama /api/embed 与 OpenAI /embeddings（含 WSL 回退）
+  └─ Provider Service
+       ├─ Ollama /v1 兼容接口
+       ├─ Ollama /api/chat 原生图片接口
+       └─ OpenAI Compatible 接口
+                │
+                ▼
+SQLite (server/data/myopenweb.db)          PostgreSQL + pgvector（可选）
+  ├─ app_config    # 含 embedding_model      └─ chunks（vector 列 + tsvector）
+  ├─ chats
+  ├─ agent_runs / agent_steps
+  ├─ memories
+  ├─ files         # 文件元数据 + 抽取文本
+  ├─ knowledge / knowledge_file
+  └─ chunks        # 切片 + embedding(JSON)（SQLite 后端时）
+
+文件本体落盘到 server/data/files/</pre>
+
+      <h2 class="reveal"><span class="no"></span>核心数据流</h2>
+      <h3>聊天请求</h3>
+      <pre data-lang="text" data-path="一次流式聊天的完整路径">
+用户输入
+→ MessageInput.onSend(text)
+→ ChatPage.handleSend()
+→ store.addMessage('user', text, files)
+→ store.addMessage('assistant', '')
+→ syncProviderConfig(settings)
+→ POST /api/chat/completions
+→ FastAPI 根据 provider 配置选择真实模型服务
+   ├─ Ollama：统一转发原生 /api/chat，并转换成 OpenAI SSE / 标准 completion JSON
+   └─ OpenAI Compatible：转发 /chat/completions
+→ 前端统一用 createOpenAITextStream() 解析
+→ appendContent(aiId, delta)
+→ feedStreamTTS(delta)
+→ 完成后 persistNow()
+→ saveChat(activeConversation)</pre>
+      <h3>Provider 配置</h3>
+      <pre data-lang="text" data-path="配置双写：localStorage + SQLite">
+SettingsDrawer 修改 providerType / apiBaseUrl / apiKey
+→ 保存到 localStorage
+→ 用户点击「保存连接配置到后端」或模型刷新/聊天发送时触发 syncProviderConfig()
+→ PUT /api/config/provider
+→ SQLite.app_config 持久化</pre>
+      <h3>对话同步</h3>
+      <pre data-lang="text" data-path="启动时的双向合并">
+App 启动
+→ fetchProviderConfig()
+→ fetchChats()
+→ 本地 localStorage 与 SQLite 做按 updatedAt 合并
+→ 以较新的版本为准回写到前端 Store
+→ 本地较新的记录再回传 SQLite</pre>
+
+      <h2 class="reveal"><span class="no"></span>模块说明</h2>
+      <h3>前端 API 层（src/apis/）</h3>
+      <ul>
+        <li><code>chat.ts</code>：不再直连第三方模型服务，只请求本地后端 <code>/api/chat/completions</code>；保留文件和图片消息的 OpenAI content-part 组装逻辑</li>
+        <li><code>config.ts</code>：<code>fetchProviderConfig()</code> 读取后端保存的 provider 配置；<code>syncProviderConfig()</code> 把当前设置同步给后端</li>
+        <li><code>chats.ts</code>：<code>fetchChats()</code> / <code>saveChat()</code> / <code>removeChat()</code>，把本地对话缓存和 SQLite 连接起来</li>
+        <li><code>models.ts</code>：统一请求 <code>/api/models</code>，由后端代为访问真实 provider</li>
+        <li><code>streaming.ts</code>：<code>createOpenAITextStream()</code> 是主路径，<code>createOllamaTextStream()</code> 保留为兼容工具</li>
+      </ul>
+
+      <h3>本地后端（server/）</h3>
+      <ul>
+        <li><code>main.py</code>：初始化 SQLite、注册 CORS（<code>MYOPENWEB_CORS_ORIGINS</code> 可收紧）、挂载全部路由</li>
+        <li><code>db.py</code>：建表 + 外键/WAL/busy_timeout pragma；默认 provider 配置为 Ollama</li>
+        <li><code>routers/config.py</code>：<code>GET/PUT /api/config/provider</code>（API key 以 <code>***xxxx</code> 指纹脱敏返回，掩码回传不覆盖原值）；<code>POST /api/config/provider/verify</code> 检测当前 provider 是否可连接，返回配置地址、实际访问地址、模型数量、模型列表、错误信息</li>
+        <li><code>routers/models.py</code>：<code>GET /api/models</code></li>
+        <li><code>routers/chat_proxy.py</code>：<code>POST /api/chat/completions</code>，统一返回 OpenAI SSE，前端只维护一种流解析逻辑；检索失败降级 + <code>retrieval_warning</code></li>
+        <li><code>routers/agent.py</code>：<code>POST /api/agent/completions</code>（Agent 入口，复用同一套聊天请求结构，只开放后端白名单工具）；<code>GET /api/agent/runs/{run_id}</code> 查询一次 Agent 运行详情</li>
+        <li><code>routers/memories.py</code>：<code>GET/POST /api/memories</code>、<code>PUT/DELETE /api/memories/{id}</code>，管理手动长期记忆，Agent 请求时自动注入启用记忆</li>
+        <li><code>routers/chats.py</code>：<code>GET /api/chats</code>、<code>PUT/DELETE /api/chats/{id}</code></li>
+        <li><code>services/providers.py</code>：OpenAI Compatible 转发；Ollama 原生 <code>/api/chat</code> 转发；Ollama NDJSON → OpenAI SSE 协议转换；WSL 下自动尝试 <code>localhost</code> 和 Windows 主机网关地址，避免 Ollama 运行在 Windows 时本地后端连不上</li>
+        <li><code>services/agent_tools.py</code>：<code>get_current_time</code>（服务器时间）、<code>calculator</code>（AST 安全求值，不用 <code>eval</code>）、<code>analyze_log</code>（日志级别统计/错误行/异常类型）、<code>summarize_git_diff</code>（变更文件与增删行数）、<code>summarize_ticket</code>（工单号/@相关人/链接/字段抽取）、<code>generate_test_cases</code>（测试覆盖维度）、<code>search_knowledge</code>（仅选定知识库时开放，由 <code>agent_runner</code> 异步调用检索）</li>
+        <li><code>services/file_extract.py</code>：txt/md 等文本直读，pdf 用 <code>pypdf</code>，docx 用 <code>python-docx</code>，缺依赖时报清晰错误而不崩溃</li>
+        <li><code>services/embeddings.py</code>：批量向量化，复用 <code>providers.py</code> 的 URL 解析与 WSL 回退</li>
+        <li><code>services/rag.py</code>：切片（按字符 + 自然边界 + overlap）、批量向量化后写入 <code>VectorStore</code>；检索时向量 top-k + 关键词 top-k 由所选后端提供，本层做 RRF 融合 / rerank / 自纠错；维度不匹配（换了 embedding 模型）时返回空并提示重建索引；聊天融合拼接带来源标注的参考资料 system_prompt，未命中时走拒答提示</li>
+        <li><code>vectorstores/</code>（向量存储抽象层）：<code>base.py</code> 定义 <code>VectorStore</code> 协议（replace/count/delete + <code>query_by_vector</code> / <code>query_by_keywords</code> 两个排序原语）；<code>sqlite_store.py</code> 默认实现（JSON 向量 + numpy 内存余弦 + 进程内矩阵缓存与版本戳失效 + FTS5 BM25）；<code>pgvector_store.py</code>（<code>ORDER BY embedding &lt;=&gt; q</code> 余弦 + tsvector 关键词检索）；<code>factory.py</code> 按 <code>MYOPENWEB_VECTOR_BACKEND</code> + <code>MYOPENWEB_PG_DSN</code> 选择实现</li>
+        <li><code>services/agent_runner.py</code>：要求模型输出 Open WebUI 风格的 <code>tool_calls</code> 数组；兼容小模型把工具名直接写进 <code>action</code> 字段的情况；根据模型决策调用白名单工具并把结果回填给模型；工具循环轮数可配置（<code>agent_max_rounds</code>，默认 3，clamp 1-10）；知识库检索失败时工具返回结构化错误（模型转告用户），运行不中断；写入 <code>agent_runs</code> / <code>agent_steps</code>；注入已启用 <code>memories</code> 作为长期上下文</li>
+      </ul>
+
+      <h3>状态管理（src/stores/）</h3>
+      <p>使用单一 <code>useAppStore</code> 管理：<code>conversations</code>、<code>activeConversationId</code>、<code>generating</code>、<code>settings</code>、<code>pendingFiles</code>、<code>sidebarOpen</code>、<code>settingsOpen</code>。</p>
+      <p>持久化策略：</p>
+      <ul>
+        <li>设置先写 <code>localStorage</code>，Provider 配置再同步到 SQLite</li>
+        <li>对话先写 <code>localStorage</code>，流结束后同步到 SQLite</li>
+        <li>文件内容在本地持久化时仍然剥离，避免 localStorage 膨胀</li>
+      </ul>
+
+      <h3>设置面板（src/components/settings/SettingsDrawer.tsx）</h3>
+      <ul>
+        <li><b>Provider 连接配置</b>：<code>providerType</code> / <code>apiBaseUrl</code> / <code>apiKey</code>，可手动保存到后端，可点击「测试连接」检查 provider 是否可访问</li>
+        <li><b>Agent 配置</b>：<code>agentEnabled</code>（开启后聊天请求走 <code>/api/agent/completions</code>）、工具调用协议（prompt / native）、最大工具轮数（1-10）、联网搜索开关</li>
+        <li><b>聊天运行参数</b>：<code>model</code> / <code>systemPrompt</code> / <code>temperature</code> / <code>maxTokens</code> / <code>streamOutput</code> / <code>ttsEnabled / ttsLang / ttsRate</code></li>
+      </ul>
+
+      <h3>对话与侧边栏（src/components/sidebar/Sidebar.tsx）</h3>
+      <ul>
+        <li>支持新建、切换、删除；按标题和内容搜索</li>
+        <li>Markdown / JSON 导出</li>
+        <li>删除时会同时删除 SQLite 中的记录</li>
+      </ul>
+
+      <h3>文件与图片消息</h3>
+      <ul>
+        <li>浏览器环境：<code>&lt;input type="file"&gt;</code>；Android WebView：优先走原生 <code>pickFile()</code></li>
+        <li>文本文件：作为上下文拼接进消息文本</li>
+        <li>图片文件：作为 OpenAI content-part 的 <code>image_url</code>；对于 Ollama，后端统一走原生 <code>/api/chat</code></li>
+      </ul>
+
+      <h3>TTS / STT</h3>
+      <ul>
+        <li>TTS：使用浏览器 <code>speechSynthesis</code>（流式分句朗读）</li>
+        <li>STT：浏览器优先尝试 <code>SpeechRecognition</code>，Android WebView 回退到原生 <code>NativeSTT</code></li>
+      </ul>
+
+      <h3>Android Bridge</h3>
+      <p>桥接接口：<code>startSTT()</code> / <code>stopSTT()</code> / <code>playTTS()</code> / <code>stopTTS()</code> / <code>pickFile()</code> / <code>goBack()</code> / <code>setTitle()</code> / <code>getSafeArea()</code>。</p>
+      <ul>
+        <li>H5 端统一通过 <code>JSON.stringify(params)</code> 调 <code>callNative()</code></li>
+        <li>Android 权限回调已回接到 <code>NativeSTT.onPermissionResult()</code></li>
+        <li>WebView 容器暴露 <code>getBridge()</code> 供 Activity 权限回调使用</li>
+      </ul>
+
+      <h2 class="reveal"><span class="no"></span>数据库设计</h2>
+      <h3>app_config</h3>
+      <table>
+        <tr><th>字段</th><th>说明</th></tr>
+        <tr><td><code>key</code></td><td>配置键</td></tr>
+        <tr><td><code>value</code></td><td>配置值</td></tr>
+        <tr><td><code>updated_at</code></td><td>更新时间</td></tr>
+      </table>
+      <p>当前使用的键：<code>provider_type</code>、<code>provider_base_url</code>、<code>provider_api_key</code>、<code>embedding_model</code>（默认 <code>bge-m3</code>）、<code>ocr_*</code>、<code>retrieval_mode</code>、<code>rerank_*</code>、<code>query_rewrite_enabled</code>、<code>agentic_retrieval_enabled</code>、<code>web_search_enabled</code>、<code>agent_tool_protocol</code>、<code>agent_max_rounds</code>。</p>
+
+      <h3>chats</h3>
+      <table>
+        <tr><th>字段</th><th>说明</th></tr>
+        <tr><td><code>id</code></td><td>对话 ID</td></tr>
+        <tr><td><code>title</code></td><td>对话标题</td></tr>
+        <tr><td><code>payload</code></td><td>完整对话 JSON</td></tr>
+        <tr><td><code>created_at</code> / <code>updated_at</code></td><td>时间戳</td></tr>
+      </table>
+      <div class="callout info">
+        <span class="ic">◈</span>
+        <div class="bd">
+          <span class="t">设计原则</span>
+          <p>当前阶段优先简单可靠，不拆 message/file 多表——先把「能稳定同步和恢复」做好；后续若要做检索、附件复用、消息级索引，再拆分表结构。</p>
+        </div>
+      </div>
+
+      <h3>agent_runs</h3>
+      <table>
+        <tr><th>字段</th><th>说明</th></tr>
+        <tr><td><code>id</code></td><td>Agent 运行 ID</td></tr>
+        <tr><td><code>conversation_id</code></td><td>关联对话 ID</td></tr>
+        <tr><td><code>message_id</code></td><td>关联 assistant 消息 ID</td></tr>
+        <tr><td><code>user_message_id</code></td><td>关联 user 消息 ID</td></tr>
+        <tr><td><code>model</code></td><td>使用的模型</td></tr>
+        <tr><td><code>user_input</code></td><td>用户输入</td></tr>
+        <tr><td><code>final_answer</code></td><td>最终回答</td></tr>
+        <tr><td><code>created_at</code> / <code>updated_at</code></td><td>时间戳</td></tr>
+      </table>
+
+      <h3>agent_steps</h3>
+      <table>
+        <tr><th>字段</th><th>说明</th></tr>
+        <tr><td><code>id</code></td><td>步骤 ID</td></tr>
+        <tr><td><code>run_id</code></td><td>关联 Agent 运行 ID</td></tr>
+        <tr><td><code>step_index</code></td><td>步骤序号</td></tr>
+        <tr><td><code>type</code></td><td><code>model_decision</code> / <code>tool_call</code> / <code>tool_result</code> / <code>final</code></td></tr>
+        <tr><td><code>name</code></td><td>工具名或步骤名</td></tr>
+        <tr><td><code>input_json</code> / <code>output_json</code></td><td>输入 / 输出 JSON</td></tr>
+        <tr><td><code>ok</code></td><td>是否成功</td></tr>
+        <tr><td><code>error</code></td><td>错误信息</td></tr>
+        <tr><td><code>created_at</code></td><td>创建时间</td></tr>
+      </table>
+
+      <h3>memories</h3>
+      <table>
+        <tr><th>字段</th><th>说明</th></tr>
+        <tr><td><code>id</code></td><td>Memory ID</td></tr>
+        <tr><td><code>content</code></td><td>记忆内容</td></tr>
+        <tr><td><code>category</code></td><td><code>preference</code> / <code>profile</code> / <code>project</code> / <code>fact</code></td></tr>
+        <tr><td><code>enabled</code></td><td>是否注入 Agent</td></tr>
+        <tr><td><code>created_at</code> / <code>updated_at</code></td><td>时间戳</td></tr>
+      </table>
+
+      <h3>files</h3>
+      <table>
+        <tr><th>字段</th><th>说明</th></tr>
+        <tr><td><code>id</code></td><td>文件 ID</td></tr>
+        <tr><td><code>filename</code></td><td>原始文件名</td></tr>
+        <tr><td><code>path</code></td><td>落盘路径（server/data/files/）</td></tr>
+        <tr><td><code>mime_type</code></td><td>MIME 类型</td></tr>
+        <tr><td><code>size</code></td><td>字节大小</td></tr>
+        <tr><td><code>hash</code></td><td>内容 SHA-256</td></tr>
+        <tr><td><code>text_content</code></td><td>抽取出的纯文本</td></tr>
+        <tr><td><code>meta_json</code></td><td>预留元数据</td></tr>
+        <tr><td><code>created_at</code> / <code>updated_at</code></td><td>时间戳</td></tr>
+      </table>
+
+      <h3>knowledge / knowledge_file</h3>
+      <table>
+        <tr><th>表</th><th>字段</th><th>说明</th></tr>
+        <tr><td rowspan="3"><code>knowledge</code></td><td><code>id</code></td><td>知识库 ID</td></tr>
+        <tr><td><code>name</code> / <code>description</code></td><td>名称与描述</td></tr>
+        <tr><td><code>created_at</code> / <code>updated_at</code></td><td>时间戳</td></tr>
+        <tr><td rowspan="2"><code>knowledge_file</code></td><td><code>knowledge_id</code> / <code>file_id</code></td><td>多对多绑定，主键 <code>(knowledge_id, file_id)</code></td></tr>
+        <tr><td><code>created_at</code></td><td>绑定时间</td></tr>
+      </table>
+
+      <h3>chunks</h3>
+      <table>
+        <tr><th>字段</th><th>说明</th></tr>
+        <tr><td><code>id</code></td><td>分块 ID</td></tr>
+        <tr><td><code>knowledge_id</code></td><td>所属知识库</td></tr>
+        <tr><td><code>file_id</code></td><td>来源文件</td></tr>
+        <tr><td><code>chunk_index</code></td><td>分块序号</td></tr>
+        <tr><td><code>content</code></td><td>分块文本</td></tr>
+        <tr><td><code>embedding</code></td><td>向量（JSON 数组字符串）</td></tr>
+        <tr><td><code>created_at</code></td><td>创建时间</td></tr>
+      </table>
+      <div class="callout warn">
+        <span class="ic">◈</span>
+        <div class="bd">
+          <span class="t">设计原则 · 向量归 VectorStore 管</span>
+          <p>chunks 归属 <code>VectorStore</code> 抽象层管理。默认 SQLite 后端把向量以 JSON 存进本表、查询用 numpy 内存余弦（进程内矩阵缓存 + 版本戳失效）；设置 <code>MYOPENWEB_VECTOR_BACKEND=pgvector</code> 后 chunks 改存 PostgreSQL（<code>vector</code> 列 + tsvector 关键词索引），业务表（chats/files/knowledge 等）仍留在 SQLite，切换后需重建索引。</p>
+        </div>
+      </div>
+
+      <h2 class="reveal"><span class="no"></span>默认配置</h2>
+      <table>
+        <tr><th>配置项</th><th>默认值</th></tr>
+        <tr><td>Provider</td><td><code>ollama</code></td></tr>
+        <tr><td>API 地址</td><td><code>http://localhost:11434/v1</code></td></tr>
+        <tr><td>API Key</td><td>空</td></tr>
+        <tr><td>Agent 模式</td><td><code>false</code></td></tr>
+        <tr><td>Agent 最大工具轮数</td><td><code>3</code>（设置页可调 1-10）</td></tr>
+        <tr><td>向量后端</td><td><code>sqlite</code>（环境变量 <code>MYOPENWEB_VECTOR_BACKEND</code> 可切 <code>pgvector</code>）</td></tr>
+        <tr><td>模型</td><td><code>qwen3.5:4b</code></td></tr>
+        <tr><td>System Prompt</td><td><code>You are a helpful assistant.</code></td></tr>
+        <tr><td>温度</td><td><code>0.7</code></td></tr>
+        <tr><td>Max Tokens</td><td><code>4096</code></td></tr>
+        <tr><td>流式输出</td><td><code>true</code></td></tr>
+        <tr><td>TTS 自动朗读</td><td><code>false</code></td></tr>
+        <tr><td>TTS 语言</td><td><code>zh-CN</code></td></tr>
+        <tr><td>TTS 速度</td><td><code>1.0</code></td></tr>
+      </table>
+
+      <h2 class="reveal"><span class="no"></span>开发命令</h2>
+      <pre data-lang="bash" data-path="本地开发环境">
+# 首次初始化本地后端
+python3 -m venv .venv
+./.venv/bin/pip install -r server/requirements.txt
+
+# 前端
+pnpm dev
+pnpm build
+pnpm preview
+
+# 后端
+pnpm dev:server
+pnpm server
+
+# Windows PowerShell 一键启动后端（推荐给 Windows + WSL 环境）
+.\scripts\dev-server.ps1
+
+# Windows 双击/命令行启动后端
+.\start-backend.bat</pre>
+      <div class="callout ok">
+        <span class="ic">✓</span>
+        <div class="bd">
+          <span class="t">本地开发建议</span>
+          <ol>
+            <li>先启动后端：Windows 推荐双击 <code>start-backend.bat</code>；PowerShell 可用 <code>.\scripts\dev-server.ps1</code>；WSL 内可用 <code>pnpm dev:server</code></li>
+            <li>再启动前端：<code>pnpm dev</code></li>
+            <li>前端通过 Vite 代理把 <code>/api/*</code> 转到后端；Windows + WSL 环境会自动使用 WSL IP，其他环境默认 <code>http://127.0.0.1:8000</code></li>
+          </ol>
+        </div>
+      </div>
+
+      <h2 class="reveal"><span class="no"></span>已完成功能</h2>
+      <ul class="checklist">
+        <li>React + TypeScript + Vite + Tailwind 聊天前端</li>
+        <li>Markdown / 代码高亮 / 文件与图片消息</li>
+        <li>多轮对话与侧边栏管理</li>
+        <li>TTS 流式朗读</li>
+        <li>Android WebView 壳工程</li>
+        <li>Android 原生 STT / TTS / 文件选择 / 安全区桥接</li>
+        <li>FastAPI 本地后端骨架</li>
+        <li>SQLite 配置与聊天持久化</li>
+        <li>Provider 配置同步到本地后端</li>
+        <li>Provider 连接自检与设置页测试按钮</li>
+        <li>模型列表统一由后端代理</li>
+        <li>聊天统一走本地后端</li>
+        <li>Agent v1 最小工具调用循环</li>
+        <li>Agent v1 安全工具：当前时间、计算器</li>
+        <li>Agent 研发/运维工具：日志分析、Git diff 摘要、工单总结、测试用例生成</li>
+        <li>Agent 运行日志：记录模型判断、工具调用、工具结果、最终回答</li>
+        <li>Agent 工具调用格式改为 Open WebUI 风格的 <code>tool_calls</code> 数组</li>
+        <li>Agent 日志详情前端展开面板</li>
+        <li>Memory 简化版：手动新增、启用/停用、删除，并注入 Agent</li>
+        <li>文件落盘 + 文本抽取（txt/md/pdf/docx），独立 <code>files</code> 表</li>
+        <li>自研 RAG 知识库：建库、传文件、切片、向量化、余弦 topK 检索</li>
+        <li>聊天选知识库：命中片段注入 system_prompt，带引用来源，库外问题拒答</li>
+        <li>RAG × Agent 融合：<code>search_knowledge</code> 工具 + 运行日志记录 + 引用来源</li>
+        <li>设置页可配置 embedding 模型，前端知识库管理抽屉 + 引用来源展示</li>
+        <li>混合检索：SQLite FTS5 BM25 + 向量余弦经 RRF 融合，自研 CJK 二元组分词，设置页可切换</li>
+        <li>Rerank：bge-reranker cross-encoder 可开关重排，依赖缺失自动回退（<code>server/rerank/</code>）</li>
+        <li>检索质量评测：40 条 QA 评测集 + Hit@K/MRR/延迟参数对照报告（<code>server/eval/</code>）</li>
+        <li>后端单元测试 + 前端 vitest + 双端 lint + GitHub Actions 三车道 CI</li>
+        <li>Docker 多阶段构建 + docker-compose（可选 Ollama / pgvector profile），FastAPI 托管 H5</li>
+        <li>PostgreSQL + pgvector 可切换向量后端（VectorStore 抽象 + 双后端契约测试）</li>
+        <li>Ollama 图片请求自动切到原生 <code>/api/chat</code>；NDJSON 在后端转换为 OpenAI SSE</li>
+        <li>localStorage 与 SQLite 的启动合并同步</li>
+        <li>WebView bridge JSON 参数修正；Android STT 权限回调接通</li>
+      </ul>
+
+      <h2 class="reveal"><span class="no"></span>Android 壳工程</h2>
+      <p>位于 <code>android/</code> 子目录，Kotlin + Gradle 独立构建。</p>
+      <h3>技术栈</h3>
+      <ul>
+        <li>语言：Kotlin；最低 API 26（Android 8.0），Target API 34（Android 14）</li>
+        <li>构建：Gradle 8.5 + AGP 8.2.2</li>
+        <li>纯原生 API，无第三方业务依赖</li>
+      </ul>
+      <h3>H5 加载策略</h3>
+      <ul>
+        <li><b>DEBUG</b>：加载开发服务器</li>
+        <li><b>RELEASE</b>：加载 <code>file:///android_asset/web/index.html</code></li>
+        <li>通过 <code>BuildConfig.DEBUG</code> 自动切换</li>
+      </ul>
+      <h3>Bridge 通信流程</h3>
+      <pre data-lang="text" data-path="H5 ↔ Android 双向通信">
+H5: window.moaBridge.callNative(method, JSON.stringify(params))
+→ Android: MoaBridge.callNative(method, paramsJson)
+→ NativeSTT / NativeTTS / NativeFilePicker / SafeAreaHelper
+→ evaluateJavascript("window[cbFuncName](data)")
+→ H5 Promise resolve</pre>
+
+      <h2 class="reveal"><span class="no"></span>当前边界</h2>
+      <p>当前版本已经具备：单用户本地使用、本地配置管理、对话持久化、移动端壳接入、Ollama / OpenAI Compatible 模型代理、WSL → Windows Ollama 自动回退访问。</p>
+      <p>当前还没有做：</p>
+      <ul>
+        <li>用户系统、权限控制</li>
+        <li>工作流 / Dify 式可视化编排</li>
+        <li>Redis / 多设备同步</li>
+        <li>文件级增量索引（当前为知识库整体重建）</li>
+      </ul>
+
+      <h2 class="reveal"><span class="no"></span>后续迭代方向</h2>
+      <ul class="checklist">
+        <li>文件内容入库或落盘，支持历史附件真正可重放</li>
+        <li>简单知识库：文件列表、文本抽取、按关键词/向量注入上下文</li>
+        <li>RAG / 向量检索接入</li>
+        <li>检索增强：rerank、混合检索（BM25 + 向量 RRF）</li>
+        <li>PostgreSQL + pgvector 可切换向量后端（<code>server/vectorstores/</code> 抽象层，环境变量切换，双后端契约测试）</li>
+        <li class="todo">按文件增量索引（当前为知识库整体重建）</li>
+        <li class="todo">聊天消息与附件拆表，替代当前单 JSON 存储</li>
+        <li class="todo">模型配置中心扩展为多 provider 列表</li>
+        <li class="todo">统一错误码与后端日志</li>
+        <li class="todo">更好的 TTS（Edge TTS / OpenAI TTS）</li>
+        <li class="todo">主题切换与更完整的移动端交互优化</li>
+      </ul>
+
+      <h2 class="reveal"><span class="no"></span>演进复盘：五步入门路线（全部完成）</h2>
+      <p>项目按「让本地开发链路可观测 → 用最小闭环理解 Agent 核心结构」的路线演进，五步全部落地，保留于此作为学习路径参考。</p>
+
+      <h3>第 1 步：稳定启动与连接自检</h3>
+      <p>目标：用户能明确知道是哪一层出问题，而不是只看到前端 <code>HTTP 500</code>。</p>
+      <ul>
+        <li>后端新增 <code>POST /api/config/provider/verify</code>，返回 provider 类型、配置地址、实际访问地址、模型数量、错误信息</li>
+        <li>设置页新增「测试连接」按钮：成功显示可用模型列表摘要，失败显示明确原因（FastAPI 未启动 / Ollama 未启动 / 模型服务不可达 / API Key 错误）</li>
+        <li>学习点：FastAPI 路由组织、Pydantic 返回结构设计、前端 loading / success / error 状态处理</li>
+      </ul>
+
+      <h3>第 2 步：Agent v1 最小工具调用循环</h3>
+      <p>目标：从「普通聊天 App」进入「Agent App」。首批安全工具：<code>get_current_time</code>、<code>calculator</code>。</p>
+      <pre data-lang="text" data-path="一次 Agent 请求的基本流程">
+用户输入
+→ 后端构造 system prompt，告诉模型有哪些工具
+→ 模型判断是否需要调用工具
+→ 后端执行工具
+→ 把工具结果再交给模型
+→ 模型生成最终回答
+→ 前端展示</pre>
+      <ul>
+        <li>Agent 不是神秘能力，本质是「模型 + 工具 + 控制循环」</li>
+        <li>工具必须由后端白名单控制，不能让模型直接执行任意命令</li>
+        <li>已兼容 <code>{"action":"calculator","expression":"..."}</code> 这类小模型常见错误格式；主协议为 <code>{"tool_calls":[{"name":"calculator","parameters":{...}}]}</code></li>
+      </ul>
+
+      <h3>第 3 步：Agent 运行日志</h3>
+      <ul>
+        <li>记录用户输入、模型判断、工具名、工具参数、工具返回结果、最终回答</li>
+        <li>前端 assistant 消息下显示「Agent 调用 N 个工具」，详细步骤经 <code>GET /api/agent/runs/{run_id}</code> 查询</li>
+        <li>学习点：可观测性比「功能多」更重要；出错时日志能快速定位是模型判断错、工具参数错，还是工具执行错</li>
+      </ul>
+
+      <h3>第 4 步：记忆与偏好</h3>
+      <ul>
+        <li>设置页可新增 memory，支持 <code>fact</code> / <code>preference</code> / <code>profile</code> / <code>project</code> 分类与启用/停用/删除</li>
+        <li>Agent 请求自动注入已启用 memory；暂不做 embedding，相似度检索留到 RAG 阶段</li>
+        <li>学习点：记忆不是把所有聊天塞进 prompt——稳定偏好和长期事实单独存储，每次请求只注入必要记忆</li>
+      </ul>
+
+      <h3>第 5 步：文件知识库 / RAG</h3>
+      <ul>
+        <li>文件落盘 → 文本切分 → 向量索引 → 相似度检索 → 检索结果注入 prompt，全链路已实现并持续演进（混合检索 / rerank / 自纠错 / pgvector）</li>
+        <li>学习点：RAG 是「检索 + 上下文注入」，不是简单上传文件；文件、分块、索引、引用来源要分开设计</li>
+      </ul>
+
+      <h2 class="reveal"><span class="no"></span>参考来源</h2>
+      <p>本项目骨架参考 Open WebUI（v0.8.12）以下方向：聊天页结构、模型代理与配置分层、流式输出处理、音频能力接入思路、聊天持久化建模方式。</p>
+      <p>更具体的 Open WebUI 对照拆解见 <a href="open-webui-analysis.html">D-04 · Open WebUI 对照分析</a>。</p>
+
+      <nav class="doc-foot-nav" data-auto></nav>
+    </article>
+  </main>
+</div>
+<script src="assets/dossier.js"></script>
+</body>
+</html>

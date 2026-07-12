@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>排障手册 · MyOpenWeb 工程文档</title>
+<meta name="description" content="MyOpenWeb 问题处理集合：环境、手机端调试、模型、UI 交互、构建、知识库/向量后端、Git 共 28 个实战问题">
+<link rel="stylesheet" href="assets/dossier.css">
+</head>
+<body>
+<div class="blueprint"></div>
+<div class="glow glow-a"></div>
+<div class="glow glow-b"></div>
+
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <main class="content">
+    <article class="article">
+
+      <header class="doc-head">
+        <div class="scanline"></div>
+        <div class="doc-kicker"><span class="line"></span><span>DOC-03 · TROUBLESHOOTING</span></div>
+        <h1>排障手册<br>—— <em>28 个</em>开发调试实战问题</h1>
+        <p class="lede">记录开发和调试过程中遇到的问题及解决方案，按「现象 / 原因 / 解决」三段式整理，点击卡片展开。</p>
+        <div class="doc-meta">
+          <span>条目 <b>28</b></span>
+          <span>分类 <b>环境 / 手机端 / 模型 / UI / 构建 / 知识库 / Git</b></span>
+          <span>形态 <b>现象 → 原因 → 解决</b></span>
+        </div>
+      </header>
+
+      <h2 class="reveal"><span class="no"></span>环境问题</h2>
+
+      <details class="qa-card"><summary><span class="q-no">#01</span><span class="q-t">Node.js 版本不匹配</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p><code>npm create vite@latest</code> 失败，提示需要 Node <code>^20.19.0 || &gt;=22.12.0</code></p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><p>项目锁定 Node 18.18.0（<code>.nvmrc</code>），最新 create-vite 不兼容</p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd"><ul><li>使用旧版 <code>npx create-vite@5 . --template react-ts</code></li><li>推荐安装 fnm 自动切换 Node 版本（详见 <a href="fnm-node-version-management.html">D-05 · fnm Node 版本管理</a>）</li></ul></div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#02</span><span class="q-t">npm install 卡住 / 极慢</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p><code>npm install</code> 长时间无响应</p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><p>默认 npm registry 在国内访问慢</p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd">
+<pre data-lang="bash" data-path="两种方案">
+# 方案 A：切换镜像
+npm install --registry=https://registry.npmmirror.com
+
+# 方案 B（推荐）：使用 pnpm
+pnpm install</pre>
+        </div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#03</span><span class="q-t">Ollama 内存不足</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p><code>Error: 500 Internal Server Error: model requires more system memory (X GiB) than is available (Y GiB)</code></p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><p>模型加载需要的内存超过当前可用内存（其他程序占用过多）</p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd"><ul><li>关闭 Android Studio、多余的浏览器标签等吃内存的程序</li><li>使用更小的量化版本：<code>ollama run qwen3.5:4b-q4_0</code></li><li>4B 模型约需 5GB 可用内存，7B 模型约需 8GB</li></ul></div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#04</span><span class="q-t">Vite proxy error: ECONNREFUSED 127.0.0.1:8000</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd">
+<pre data-lang="text" data-path="前端终端反复出现">
+[vite] http proxy error: /api/config/provider
+Error: connect ECONNREFUSED 127.0.0.1:8000</pre>
+<p>页面里可能同时显示 <code>Provider config sync failed: HTTP 500</code></p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><p>前端 Vite 已启动，但 FastAPI 本地后端没有在 <code>8000</code> 端口监听。Ollama 启动只代表模型服务可用，不等于 MyOpenWeb 的本地后端已启动。检查：<code>curl http://127.0.0.1:8000/api/health</code>，返回连接失败说明后端没启动。</p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd">
+<p>Windows 推荐直接双击项目根目录的 <code>start-backend.bat</code>，或：</p>
+<pre data-lang="powershell" data-path="PowerShell">
+cd D:\ai_one\MyOpenWeb
+.\start-backend.bat
+# 或 PowerShell 脚本
+.\scripts\dev-server.ps1</pre>
+<pre data-lang="bash" data-path="或手动在 WSL 中启动">
+# 首次安装后端依赖
+python3 -m venv .venv
+./.venv/bin/pip install -r server/requirements.txt
+
+# 启动 FastAPI 本地后端
+./.venv/bin/python -m uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload
+
+# 另开一个终端启动前端
+pnpm dev</pre>
+<p>正常情况下 <code>curl http://127.0.0.1:8000/api/health</code> 应返回 <code>{"ok": true}</code>。</p>
+<div class="callout warn"><span class="ic">◈</span><div class="bd"><span class="t">必须同时启动三类服务</span><ul>
+<li>Ollama：模型服务，默认端口 <code>11434</code></li>
+<li>MyOpenWeb FastAPI：本地后端，端口 <code>8000</code></li>
+<li>Vite：前端开发服务器，端口 <code>5173</code></li>
+</ul></div></div>
+<p>设置页里的「测试连接」按钮会调用 <code>POST /api/config/provider/verify</code>，返回 provider 配置地址、实际访问地址、模型数量和错误信息。如果你在 WSL 中运行 FastAPI、Ollama 在 Windows 中运行，测试结果里的「实际地址」可能会显示类似 <code>http://172.20.0.1:11434/v1</code>，这是正常的 WSL 网关回退地址。</p>
+<p>如果 Vite 在 Windows 里启动、FastAPI 在 WSL 里启动，Windows 可能无法通过 <code>127.0.0.1:8000</code> 访问 WSL。当前 <code>vite.config.ts</code> 会自动检测 WSL IP 并把 <code>/api</code> 代理到 <code>http://&lt;WSL_IP&gt;:8000</code>。如需手动指定代理目标：</p>
+<pre data-lang="powershell" data-path="手动指定代理目标">
+$env:MOW_API_TARGET = "http://172.20.12.99:8000"
+pnpm dev</pre>
+        </div></div>
+      </div></details>
+
+      <h2 class="reveal"><span class="no"></span>手机端调试</h2>
+
+      <details class="qa-card"><summary><span class="q-no">#05</span><span class="q-t">ERR_CLEARTEXT_NOT_PERMITTED</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p>手机端 WebView 报 <code>net::ERR_CLEARTEXT_NOT_PERMITTED</code></p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><p>Android 9+ 默认禁止 HTTP 明文请求</p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd"><p><code>network_security_config.xml</code> 配置全局允许明文流量：</p>
+<pre data-lang="text" data-path="res/xml/network_security_config.xml">
+&lt;network-security-config&gt;
+    &lt;base-config cleartextTrafficPermitted="true"&gt;
+        &lt;trust-anchors&gt;
+            &lt;certificates src="system" /&gt;
+        &lt;/trust-anchors&gt;
+    &lt;/base-config&gt;
+&lt;/network-security-config&gt;</pre>
+        </div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#06</span><span class="q-t">手机端 API 地址是 localhost 导致无法连接</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p>手机端发送消息无响应，设置里 API 地址显示 <code>http://localhost:11434/v1</code></p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><p>localStorage 缓存了 PC 端写入的 localhost 地址；手机上 localhost 指向手机自身，不是电脑</p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd"><p>已内置自动修复：</p><ul>
+<li><code>loadSettings()</code> 时 <code>resolveApiUrl()</code> 自动检测页面 host，将 localhost 替换为实际 IP，修正后写回 localStorage</li>
+<li><code>ChatPage.handleSend()</code> 发送时也会再次 resolve，双重保险</li>
+<li>如自动修复未生效，手动在设置里改为 <code>http://192.168.137.1:11434/v1</code></li></ul></div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#07</span><span class="q-t">Ollama 不接受局域网访问</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p>PC 上正常，手机端请求超时或无响应</p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><p>Ollama 默认只监听 <code>127.0.0.1:11434</code>，拒绝外部连接</p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd">
+<pre data-lang="powershell" data-path="设置环境变量后重启 Ollama">
+# PowerShell（永久设置）
+[System.Environment]::SetEnvironmentVariable('OLLAMA_HOST', '0.0.0.0:11434', 'User')
+
+# 然后：系统托盘 → 右键 Ollama → Quit → 重新启动 Ollama</pre>
+        </div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#08</span><span class="q-t">真机调试连接方式</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row fix"><span class="lb">配置</span><div class="bd"><ol>
+<li>电脑开热点，手机连接</li>
+<li><code>app/build.gradle.kts</code> 中 <code>DEV_SERVER_URL</code> 设为 <code>http://192.168.137.1:5173</code></li>
+<li>Vite 配置 <code>host: true</code>（已配好）</li>
+<li>Ollama 设置 <code>OLLAMA_HOST=0.0.0.0:11434</code></li>
+<li>H5 中 API 地址会自动适配为 <code>http://192.168.137.1:11434/v1</code></li></ol>
+<pre data-lang="text" data-path="调试链路">
+手机 ──WiFi连热点──► 电脑(192.168.137.1)
+  │                        ├─ Vite Dev Server (0.0.0.0:5173)
+  │ WebView 加载 H5        ├─ Ollama API    (0.0.0.0:11434)
+  │◄───────────────────────┘</pre>
+        </div></div>
+      </div></details>
+
+      <h2 class="reveal"><span class="no"></span>模型相关</h2>
+
+      <details class="qa-card"><summary><span class="q-no">#09</span><span class="q-t">Agent 模式回复慢或没有返回</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p>开启设置页的「Agent 模式」后，请求明显比普通聊天慢，或者等待较久才返回。</p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><ul><li>Agent 至少会先让模型判断是否需要工具</li><li>如果需要工具，会多一次「工具结果 → 模型最终回答」的请求</li><li>小模型有时不能稳定输出约定 JSON，后端需要等待或兜底</li></ul></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd"><ul>
+<li>先用简单问题测试：<code>现在几点？</code> 或 <code>用计算器算 (12 + 8) * 3 / 2</code></li>
+<li>如果只是普通聊天，不需要工具时可以关闭「Agent 模式」</li>
+<li>降低模型参数里的 Max Tokens，例如 <code>1024</code>；设置页可调小「最大工具轮数」</li>
+<li>本地模型冷启动时先在 Ollama 里运行一次模型，让它加载到内存</li></ul></div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#10</span><span class="q-t">Agent 模式直接显示 JSON 工具指令</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p>开启 Agent 模式后，页面直接显示 <code>{"action":"get_current_time"}</code> 或 <code>{"action":"calculator","expression":"(12 + 8) * 3 / 2"}</code></p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><p>小模型没有严格遵守约定。后端要求模型输出 <code>{"tool_calls":[{"name":"calculator","parameters":{...}}]}</code>，但 qwen2.5:3b 这类小模型可能把工具名直接写到 <code>action</code> 字段。旧逻辑会把它当成最终回答返回给前端。</p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd"><p>已修复——后端 <code>agent_runner</code> 增加兼容层：<code>{"action":"get_current_time"}</code> 自动识别为时间工具调用、<code>{"action":"calculator","expression":"..."}</code> 自动识别为计算器调用，工具 JSON 不再直接展示给用户。如果页面仍显示 JSON：重启后端或确认 <code>uvicorn --reload</code> 已完成自动重载、刷新前端页面、重新发送测试问题（<code>现在几点？</code> / <code>用计算器算一下 (12 + 8) * 3 / 2</code>）。</p></div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#11</span><span class="q-t">Agent 调用了工具但页面没有显示工具摘要</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p>Agent 已经正常回答，但 assistant 消息下面没有显示 <code>Agent 调用 N 个工具</code>。</p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><ul><li>前端页面仍是旧构建，尚未刷新</li><li>后端尚未重载到支持 <code>agent</code> 元数据的版本</li><li>当前问题不需要工具，<code>toolCalls</code> 为空</li></ul></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd"><p>检查：<code>curl http://127.0.0.1:8000/api/agent/runs/&lt;run_id&gt;</code>；不知道 run_id 就先用页面测试 <code>用计算器算一下 (12 + 8) * 3 / 2</code>，正常应出现「Agent 调用 1 个工具：calculator」。处理：等待 <code>uvicorn --reload</code> 自动重载或重启 <code>start-backend.bat</code>、刷新浏览器页面、确认设置页已经开启 Agent 模式。</p></div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#12</span><span class="q-t">Memory 已添加但 Agent 没有使用</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p>设置页已经添加 Memory，但 Agent 回答时像没有看到。</p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><ul><li>Memory 被停用了</li><li>当前问题和 Memory 不相关，模型没有主动使用</li><li>后端还没重载到包含 Memory 注入的版本</li><li>普通聊天模式不会走 Agent 记忆注入</li></ul></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd"><p>检查 <code>curl http://127.0.0.1:8000/api/memories</code> 确认对应记忆的 <code>enabled</code> 是 <code>true</code>。处理：在设置页打开 Agent 模式、确认 Memory 右侧状态是「启用」、重启后端或等待重载、用明确问题测试（如「根据你的记忆，我现在在做什么项目？」）。</p></div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#13</span><span class="q-t">模型看不懂图片</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p>发送图片后模型回复「无法看到图片」或不理解图片内容</p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><p>使用的模型不支持多模态（如 <code>qwen2.5:3b</code> 是纯文本模型）</p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd"><p>使用支持 vision 的模型：<code>qwen3.5:4b</code>（推荐，最新、支持多模态、文本能力也强）、<code>llava:7b</code>、<code>moondream</code> 等。</p></div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#14</span><span class="q-t">qwen3.5 输出大量 Thinking 内容</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p>模型回复前有很长的 <code>Thinking...</code> / <code>&lt;think&gt;...&lt;/think&gt;</code> 推理过程</p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><p>qwen3.5 默认启用「思考模式」，会输出内部推理链</p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd"><p>已内置自动过滤：流式输出时 <code>filterThinking()</code> 自动过滤 <code>&lt;think&gt;...&lt;/think&gt;</code> 标签内的内容，用户只看到最终回复。位于 <code>src/utils/thinking.ts</code>。</p></div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#15</span><span class="q-t">Ollama 图片请求极慢（一直转圈）</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p>发送图片后 AI 长时间不回复</p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><p>OpenAI 兼容端点 <code>/v1/chat/completions</code> 处理大 base64 数据极慢</p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd"><p>已内置自动切换：当检测到 Ollama + 图片请求时，自动切换到原生 <code>/api/chat</code> 端点（<code>images</code> 字段传纯 base64，效率高很多），由 <code>isOllamaVisionRequest()</code> 自动检测，无需手动配置。</p></div></div>
+      </div></details>
+
+      <h2 class="reveal"><span class="no"></span>UI / 交互问题</h2>
+
+      <details class="qa-card"><summary><span class="q-no">#16</span><span class="q-t">手机端按钮点击不灵敏</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p>按钮需要多次点击才响应</p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><ul><li>移动端浏览器 300ms 点击延迟（等待判断双击）</li><li>按钮尺寸太小（&lt; 44px），触摸容易 miss</li><li><code>hover:</code> 状态在触摸屏上行为异常</li></ul></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd"><p>已修复：全局 <code>touch-action: manipulation</code> 消除延迟、所有按钮最小 44x44px、交互反馈从 <code>hover:</code> 改为 <code>active:</code>、<code>-webkit-tap-highlight-color: transparent</code>。</p></div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#17</span><span class="q-t">无法复制聊天内容</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p>长按聊天文字无法选中/复制</p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><p>全局 <code>user-select: none</code> CSS 阻止了文本选择</p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd"><p>仅对 <code>button</code>、<code>nav</code>、<code>[role="button"]</code> 设置 <code>user-select: none</code>；聊天区域 <code>.markdown-body</code> 设置 <code>user-select: text</code>。</p></div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#18</span><span class="q-t">Sidebar 操作按钮在手机上不可用</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p>对话列表的导出/删除按钮在手机上看不到</p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><p>使用了 <code>hidden group-hover:flex</code>，hover 在触摸屏不触发</p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd"><p>操作按钮改为始终可见，不依赖 hover。</p></div></div>
+      </div></details>
+
+      <h2 class="reveal"><span class="no"></span>构建问题</h2>
+
+      <details class="qa-card"><summary><span class="q-no">#19</span><span class="q-t">AAPT: adaptive-icon requires SDK 26</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p><code>&lt;adaptive-icon&gt; elements require a sdk version of at least 26</code></p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><p><code>adaptive-icon</code> XML 放在了 <code>mipmap-hdpi</code> 目录（无版本限定）</p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd"><ul><li>将 <code>ic_launcher.xml</code> 移到 <code>mipmap-anydpi-v26/</code></li><li><code>minSdk</code> 从 24 提升到 26（Android 8.0+，覆盖率 99%+）</li></ul></div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#20</span><span class="q-t">TypeScript 类型错误：TextDecoderStream</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p><code>Argument of type 'TextDecoderStream' is not assignable to parameter of type 'ReadableWritablePair&lt;string, Uint8Array&gt;'</code></p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd">
+<pre data-lang="ts" data-path="添加类型断言">
+.pipeThrough(new TextDecoderStream() as unknown as TransformStream&lt;Uint8Array, string&gt;)</pre>
+        </div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#21</span><span class="q-t">react-syntax-highlighter 包体积过大</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p>JS bundle 966KB，大部分来自语法高亮库</p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd"><ul><li>使用 Light 构建：<code>import { Light as SyntaxHighlighter } from 'react-syntax-highlighter/dist/esm/light'</code></li><li>只注册常用语言（JS/TS/Python/Java/JSON 等约 15 种）</li><li>优化后 bundle 降至 424KB（减少 56%）</li></ul></div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#22</span><span class="q-t">qwen3.5:4b 在 CPU 上响应极慢（2 分钟）</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p>发送消息后长时间转圈，看起来像没响应</p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><p>qwen3.5:4b 默认启用「思考模式」，会先生成大量 <code>&lt;think&gt;</code> 内容再给出回复。在无 GPU 的纯 CPU 环境下，推理一个简单 "hi" 需要 118 秒</p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd"><p>已内置自动关闭：OpenAI 兼容端点请求体加 <code>chat_template_kwargs: { enable_thinking: false }</code>；Ollama 原生端点请求体加 <code>think: false</code>。关闭后同样的 "hi" 从 118 秒降到 22 秒（5 倍提速）。</p></div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#23</span><span class="q-t">Ollama CORS 拒绝手机浏览器跨域请求</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p>手机浏览器能打开 H5 页面，但模型列表不加载、发消息无响应</p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><p>Ollama 默认只允许 <code>localhost</code> 来源的请求。手机浏览器的 origin 是 <code>http://192.168.137.1:5173</code>，不匹配 localhost，被 CORS 策略拒绝。PC 上不受影响是因为 origin 是 <code>http://localhost:5173</code></p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd">
+<pre data-lang="powershell" data-path="设置 OLLAMA_ORIGINS 后重启 Ollama">
+[System.Environment]::SetEnvironmentVariable('OLLAMA_ORIGINS', '*', 'User')
+# 然后：系统托盘 → Ollama → Quit → 重新启动</pre>
+<pre data-lang="text" data-path="Ollama 所需的完整环境变量">
+OLLAMA_HOST = 0.0.0.0:11434     # 监听所有网卡（允许局域网访问）
+OLLAMA_ORIGINS = *               # 允许所有来源的跨域请求</pre>
+        </div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#24</span><span class="q-t">Windows 防火墙阻止手机访问电脑端口</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p>手机连热点后能加载 H5 页面但无法访问 Ollama API</p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><p>Windows 防火墙没有放行 11434 端口</p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd">
+<pre data-lang="powershell" data-path="管理员 PowerShell 执行">
+netsh advfirewall firewall add rule name="Ollama API 11434" dir=in action=allow protocol=TCP localport=11434 profile=any
+netsh advfirewall firewall add rule name="Vite Dev 5173" dir=in action=allow protocol=TCP localport=5173 profile=any</pre>
+        </div></div>
+      </div></details>
+
+      <h2 class="reveal"><span class="no"></span>知识库 / 向量后端</h2>
+
+      <details class="qa-card"><summary><span class="q-no">#25</span><span class="q-t">回答顶部出现黄色提示「知识库检索失败，本次回答未使用知识库」</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p>选中了知识库提问，回答正常返回，但气泡顶部有黄色警示条，且没有「引用来源」</p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><p>检索链路异常（最常见：embedding 模型服务不可达，如 Ollama 未启动或 <code>bge-m3</code> 未拉取；pgvector 模式下还可能是 PostgreSQL 连不上）。系统设计为检索失败时<b>降级为普通回答而不是报 502</b>，警示条括号里带具体原因</p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd"><ul>
+<li>按警示条括号里的原因排查：<code>ollama pull bge-m3</code>、确认 Ollama 已启动、设置页「测试连接」</li>
+<li>pgvector 模式：确认 PG 容器在跑（<code>docker compose ps</code>）、<code>MYOPENWEB_PG_DSN</code> 正确</li>
+<li>修复后重新提问即可，无需重启后端</li></ul></div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#26</span><span class="q-t">切换 pgvector 后端后检索结果为空</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p>设置 <code>MYOPENWEB_VECTOR_BACKEND=pgvector</code> 重启后，知识库问答全部拒答，知识库页分块数显示 0</p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><p>切换后端不迁移数据——SQLite 里的旧向量不会自动搬到 PostgreSQL，chunks 需要重建</p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd"><ul><li>知识库页对每个库点「建立/重建索引」，向量会写入 PG</li><li>切回 SQLite 同理（原 SQLite 向量还在，无需重建）</li></ul></div></div>
+      </div></details>
+
+      <details class="qa-card"><summary><span class="q-no">#27</span><span class="q-t">pgvector 启动报错 MYOPENWEB_PG_DSN / psycopg 缺失</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p><code>RuntimeError: MYOPENWEB_VECTOR_BACKEND=pgvector 需要同时设置 MYOPENWEB_PG_DSN</code>，或 <code>pgvector 后端需要 psycopg</code></p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd">
+<pre data-lang="bash" data-path="两种方式">
+# 本地裸跑：装驱动 + 给 DSN
+./.venv/bin/pip install -r server/requirements-pgvector.txt
+export MYOPENWEB_VECTOR_BACKEND=pgvector
+export MYOPENWEB_PG_DSN=postgresql://myopenweb:myopenweb@localhost:5432/myopenweb
+
+# Docker：一条命令带起 PG（镜像已内置驱动与默认 DSN）
+MYOPENWEB_VECTOR_BACKEND=pgvector docker compose --profile pgvector up -d --build</pre>
+<p>首连自动执行 <code>CREATE EXTENSION vector</code> 并建表，要求 PG 侧安装了 pgvector 扩展（<code>pgvector/pgvector:pg16</code> 镜像自带）。</p>
+        </div></div>
+      </div></details>
+
+      <h2 class="reveal"><span class="no"></span>Git 操作</h2>
+
+      <details class="qa-card"><summary><span class="q-no">#28</span><span class="q-t">PowerShell Heredoc 语法报错</span><span class="chev">▸</span></summary><div class="q-body">
+        <div class="qa-row sym"><span class="lb">现象</span><div class="bd"><p>用 <code>&lt;&lt;'EOF'</code> 写多行 commit message 时 PowerShell 报 <code>ParserError</code></p></div></div>
+        <div class="qa-row why"><span class="lb">原因</span><div class="bd"><p>PowerShell 不支持 bash 的 heredoc 语法</p></div></div>
+        <div class="qa-row fix"><span class="lb">解决</span><div class="bd">
+<pre data-lang="powershell" data-path="使用多个 -m 参数">
+git commit -m "subject line" -m "body line 1" -m "body line 2"</pre>
+        </div></div>
+      </div></details>
+
+      <nav class="doc-foot-nav" data-auto></nav>
+    </article>
+  </main>
+</div>
+<script src="assets/dossier.js"></script>
+</body>
+</html>

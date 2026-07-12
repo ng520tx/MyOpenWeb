@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Open WebUI 对照分析 · MyOpenWeb 工程文档</title>
+<meta name="description" content="Open WebUI（v0.8.12）架构拆解与借鉴边界：聊天路由、Tools/Agent、Memory、Files/Knowledge/RAG 的对照分析">
+<link rel="stylesheet" href="assets/dossier.css">
+</head>
+<body>
+<div class="blueprint"></div>
+<div class="glow glow-a"></div>
+<div class="glow glow-b"></div>
+
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <main class="content">
+    <article class="article">
+
+      <header class="doc-head">
+        <div class="scanline"></div>
+        <div class="doc-kicker"><span class="line"></span><span>DOC-04 · OPEN WEBUI ANALYSIS</span></div>
+        <h1>Open WebUI 对照分析<br>—— 拆解参考项目的<em>架构原则与借鉴边界</em></h1>
+        <p class="lede">分析对象：Open WebUI v0.8.12。抽取它的架构原则、划定「个人版最小闭环」的借鉴边界——本项目多数核心设计决策的源头。</p>
+        <div class="doc-meta">
+          <span>性质 <b>研究笔记（项目早期）</b></span>
+          <span>对象 <b>open-webui v0.8.12</b></span>
+          <span>产出 <b>借鉴清单 + 边界清单</b></span>
+        </div>
+      </header>
+
+      <div class="callout info">
+        <span class="ic">◈</span>
+        <div class="bd">
+          <span class="t">阅读提示 · 历史文档</span>
+          <p>这是项目早期的拆解笔记，文中「建议下一步 / 待完成」的事项（tool_calls 格式统一、Agent 运行日志、Memory、文件落盘、RAG、原生 function calling、MCP Server、PostgreSQL 向量后端等）<b>此后已全部落地</b>。保留原文是为了追溯设计决策的来龙去脉——每个功能"为什么这么做"的第一现场。</p>
+        </div>
+      </div>
+
+      <h2 class="reveal"><span class="no"></span>结论</h2>
+      <p>Open WebUI 是完整平台，不是单纯聊天 App。它的核心复杂度集中在：</p>
+      <ul>
+        <li>多 provider / 多模型路由</li>
+        <li>用户、权限、分享、分组</li>
+        <li>工具注册、工具权限、工具调用循环</li>
+        <li>文件、知识库、RAG、引用来源</li>
+        <li>记忆系统</li>
+        <li>WebSocket 事件流</li>
+        <li>Pipeline / Function 插件系统</li>
+        <li>多数据库迁移和大量配置项</li>
+      </ul>
+      <div class="callout warn">
+        <span class="ic">◈</span>
+        <div class="bd">
+          <span class="t">路线判断</span>
+          <p>MyOpenWeb 定位是个人版 AI App 骨架，不能整包照搬。合理路线是：<b>抽取 Open WebUI 的架构原则，但只实现个人版最小闭环</b>。</p>
+        </div>
+      </div>
+
+      <h2 class="reveal"><span class="no"></span>Open WebUI 后端结构</h2>
+      <pre data-lang="text" data-path="backend/open_webui/ 关键目录">
+backend/open_webui/
+├── main.py
+├── config.py
+├── functions.py
+├── models/
+├── routers/
+├── retrieval/
+├── tools/
+├── utils/
+└── socket/</pre>
+      <h3>模型与聊天路由</h3>
+      <p>相关文件：<code>utils/chat.py</code>、<code>routers/openai.py</code>、<code>routers/ollama.py</code>、<code>functions.py</code>、<code>utils/middleware.py</code>。</p>
+      <p>Open WebUI 的聊天请求不是直接转发——它会先经过统一聊天入口，再按模型归属分发到 Ollama / OpenAI / Function / Pipeline 等不同路径。核心思想：</p>
+      <pre data-lang="text" data-path="Open WebUI 的统一入口分发">
+请求
+→ 统一 chat completion 入口
+→ 读取模型配置
+→ 权限检查
+→ pipeline/filter 处理
+→ 工具 / RAG / memory 注入
+→ 分发到真实 provider
+→ 处理流式输出和事件</pre>
+      <p>MyOpenWeb 实现了其中的最小版：</p>
+      <pre data-lang="text" data-path="MyOpenWeb 的最小闭环">
+/api/chat/completions
+→ ProviderConfig
+→ Ollama / OpenAI Compatible
+→ 统一 OpenAI SSE</pre>
+      <p>当时的判断：不需要照搬权限和 pipeline，应该先补「可观测性」和「工具调用日志」——这两项随后成为 <code>agent_runs</code>/<code>agent_steps</code> 的设计来源。</p>
+
+      <h2 class="reveal"><span class="no"></span>Tools / Agent 机制</h2>
+      <p>相关文件：<code>utils/tools.py</code>、<code>models/tools.py</code>、<code>routers/tools.py</code>、<code>tools/builtin.py</code>、<code>utils/middleware.py</code>、<code>config.py</code>。Open WebUI 有两类工具调用方式：</p>
+      <h3>方式 A：Prompt 模拟函数调用</h3>
+      <pre data-lang="text" data-path="配置里的默认工具选择模板">
+Available Tools: {{TOOLS}}
+
+Return only JSON:
+{
+  "tool_calls": [
+    {"name": "toolName", "parameters": {"key": "value"}}
+  ]
+}</pre>
+      <pre data-lang="text" data-path="流程">
+用户问题
+→ 用 task model 判断需要哪些工具
+→ 解析 tool_calls
+→ 执行工具
+→ 把工具结果作为 sources/context 注入后续回答</pre>
+      <p>这和 MyOpenWeb 早期 Agent v1 接近，但格式不同。Open WebUI 用 <code>tool_calls</code> 数组：</p>
+      <pre data-lang="json" data-path="Open WebUI 格式">
+{
+  "tool_calls": [
+    {
+      "name": "calculator",
+      "parameters": {
+        "expression": "(12 + 8) * 3 / 2"
+      }
+    }
+  ]
+}</pre>
+      <p>而 MyOpenWeb 当时的格式是单工具对象：</p>
+      <pre data-lang="json" data-path="MyOpenWeb 旧格式（已弃用）">
+{
+  "action": "tool",
+  "tool": "calculator",
+  "input": {
+    "expression": "(12 + 8) * 3 / 2"
+  }
+}</pre>
+      <div class="callout ok">
+        <span class="ic">✓</span>
+        <div class="bd">
+          <span class="t">当时的建议（已落地）</span>
+          <p>把 MyOpenWeb 改成更接近 Open WebUI 的 <code>tool_calls</code> 数组格式——后续天然支持一次调用多个工具，也更接近 OpenAI function calling 结构。此建议随后实施，且旧格式保留了兼容解析。</p>
+        </div>
+      </div>
+      <h3>方式 B：Native Function Calling</h3>
+      <p>Open WebUI 也支持模型原生 tool calls。在流式响应里它会收集 <code>tool_calls</code> / <code>function.name</code> / <code>function.arguments</code> / <code>tool_call_id</code>，然后执行工具，再把结果作为 <code>tool</code> / <code>function_call_output</code> 消息继续交给模型。</p>
+      <p>当时的判断是暂缓：Ollama 本地小模型对原生 tool calling 支持不稳定，先把 prompt-tool-loop 做稳更重要，后续再加 native 作为高级路径——后来以 <code>agent_tool_protocol: prompt | native</code> 双协议可切换的形态落地。</p>
+
+      <h2 class="reveal"><span class="no"></span>Tools 数据模型</h2>
+      <pre data-lang="text" data-path="Open WebUI 的 tool 表">
+tool
+├── id
+├── user_id
+├── name
+├── content        # 存工具代码
+├── specs          # 存工具 schema
+├── meta
+├── valves         # 存工具配置
+├── created_at
+└── updated_at</pre>
+      <p>重点：<code>content</code> 存工具代码、<code>specs</code> 存 schema、<code>valves</code> 存配置，还有权限和 access grants。</p>
+      <div class="callout warn">
+        <span class="ic">◈</span>
+        <div class="bd">
+          <span class="t">借鉴边界</span>
+          <p>MyOpenWeb 不需要动态上传工具代码——工具实现放在后端白名单 Python 代码里，不允许用户上传任意代码。这是安全模型的分水岭：Open WebUI 是平台（用户可扩展工具），MyOpenWeb 是产品（工具由代码库定义）。</p>
+        </div>
+      </div>
+
+      <h2 class="reveal"><span class="no"></span>Agent 运行日志</h2>
+      <p>Open WebUI 在流式过程中会向前端发送工具执行事件，并把工具结果合并到输出结构里。这给了用户一个关键能力：<b>看见模型是否调用工具，以及工具执行结果是什么</b>。</p>
+      <p>MyOpenWeb 当时缺这个能力，这份笔记把它定为最高优先级，并给出了表设计（随后原样落地）：</p>
+      <pre data-lang="text" data-path="建议的表结构（已实现）">
+agent_runs
+├── id
+├── conversation_id
+├── message_id
+├── model
+├── user_input
+├── final_answer
+├── created_at
+└── updated_at
+
+agent_steps
+├── id
+├── run_id
+├── step_index
+├── type              # model_decision / tool_call / tool_result / final
+├── name
+├── input_json
+├── output_json
+├── ok
+├── error
+└── created_at</pre>
+      <p>前端先不做复杂调试面板，先在 assistant 消息下方显示「Agent: 调用了 calculator，结果 30」，后续再做展开详情——最终演进为步骤时间线 + 运行日志回放面板。</p>
+
+      <h2 class="reveal"><span class="no"></span>Memory 机制</h2>
+      <p>相关文件：<code>models/memories.py</code>、<code>routers/memories.py</code>。Open WebUI 的 memory 分两层：数据库存原始 memory 文本，向量库保存 embedding 用于相似度查询。结构很简单：</p>
+      <pre data-lang="text" data-path="Open WebUI memory 表">
+memory
+├── id
+├── user_id
+├── content
+├── created_at
+└── updated_at</pre>
+      <p>MyOpenWeb 的简化版设计（已实现）：</p>
+      <pre data-lang="text" data-path="MyOpenWeb memories 表（已实现）">
+memories
+├── id
+├── content
+├── category       # preference / profile / project / fact
+├── enabled
+├── created_at
+└── updated_at</pre>
+      <p>第一阶段不需要向量库——把所有启用 memory 注入 system prompt 即可，数量多了再做 embedding/RAG。</p>
+
+      <h2 class="reveal"><span class="no"></span>Files / Knowledge / RAG</h2>
+      <p>相关文件：<code>models/files.py</code>、<code>models/knowledge.py</code>、<code>routers/retrieval.py</code>、<code>retrieval/</code>。Open WebUI 把文件和知识库拆开：</p>
+      <pre data-lang="text" data-path="Open WebUI 的三表拆分">
+file
+├── id
+├── user_id
+├── hash
+├── filename
+├── path
+├── data
+├── meta
+├── created_at
+└── updated_at
+
+knowledge
+├── id
+├── user_id
+├── name
+├── description
+├── meta
+├── created_at
+└── updated_at
+
+knowledge_file
+├── knowledge_id
+└── file_id</pre>
+      <p>这个拆法值得借鉴（随后被采纳为 MyOpenWeb 的 <code>files</code> / <code>knowledge</code> / <code>knowledge_file</code> 三表结构）。当时 MyOpenWeb 的文件只是临时放在前端消息里，历史附件不可复用。笔记建议的路径：先「文件落盘 + 文本注入 + 可复用历史附件」，再上向量检索——项目实际演进完全遵循了这个顺序。</p>
+
+      <h2 class="reveal"><span class="no"></span>不建议现在照搬的部分</h2>
+      <p>当时圈定暂时不做的平台能力：</p>
+      <ul>
+        <li>用户系统、复杂权限、Access Grants</li>
+        <li>动态上传 Python Tool</li>
+        <li>MCP Tool Server、OpenAPI Tool Server</li>
+        <li>Pipeline / Filter 插件</li>
+        <li>多租户、WebSocket 实时协作</li>
+        <li>大规模向量库、PostgreSQL 迁移</li>
+      </ul>
+      <div class="callout info">
+        <span class="ic">◈</span>
+        <div class="bd">
+          <span class="t">后记</span>
+          <p>其中两项后来随项目成熟主动补齐：<b>MCP Server</b>（把知识库暴露为标准 MCP 服务，且做的是 Server 侧而非 Open WebUI 的 client 侧）与 <b>PostgreSQL + pgvector</b>（经 VectorStore 抽象做成可切换后端）。其余仍按「个人版边界」保持不做——边界本身也是设计。</p>
+        </div>
+      </div>
+
+      <h2 class="reveal"><span class="no"></span>当时的行动清单（全部完成）</h2>
+      <ul class="checklist">
+        <li><b>第 1 优先级 · Agent 运行日志</b>：新增 <code>agent_runs</code> / <code>agent_steps</code> 表，<code>run_agent()</code> 每步写日志，<code>/api/agent/runs/{id}</code> 查询详情，前端展示工具调用摘要</li>
+        <li><b>第 2 优先级 · 统一工具调用格式</b>：<code>{"action":"tool",...}</code> 调整为 <code>tool_calls</code> 数组（更接近 Open WebUI 与 OpenAI tool calls，支持多工具）</li>
+        <li><b>第 3 优先级 · Memory 简化版</b>：管理接口 + 设置页面板 + Agent 自动注入，不上 embedding</li>
+        <li><b>第 4 优先级 · 文件落盘</b>：上传到后端、SQLite 存 metadata、内容落盘、消息只存 file_id；随后文本抽取 → 关键词检索 → 向量检索逐级演进</li>
+      </ul>
+      <p>首个验收标准（已达成）：发送「现在几点？」→ 后端记录一次 <code>agent_run</code>（模型首次输出、调用 <code>get_current_time</code>、工具返回值、最终回答）→ 前端显示「Agent 调用 1 个工具：get_current_time」。</p>
+
+      <nav class="doc-foot-nav" data-auto></nav>
+    </article>
+  </main>
+</div>
+<script src="assets/dossier.js"></script>
+</body>
+</html>

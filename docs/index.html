@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MyOpenWeb · 工程文档中心</title>
+<meta name="description" content="MyOpenWeb 工程文档中心：架构展示页、项目架构、RAG+Agent 模块、排障手册、Open WebUI 对照分析、fnm 笔记与修炼手册">
+<link rel="stylesheet" href="assets/dossier.css">
+<style>
+  /* 首页专属：全宽 hero + 卡片网格（不走侧栏布局） */
+  .hub { max-width: 1080px; margin: 0 auto; padding: 72px 28px 90px; }
+  .hub-head { position: relative; padding-bottom: 46px; }
+  .hub-kicker { display: inline-flex; align-items: center; gap: 10px; margin-bottom: 24px; }
+  .hub-kicker .line { width: 36px; height: 1px; background: var(--amber-line); }
+  .hub-kicker span:last-child { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.26em; color: var(--amber); text-transform: uppercase; }
+  .hub-head h1 { font-size: clamp(30px, 5.6vw, 54px); line-height: 1.18; font-weight: 700; max-width: 820px; }
+  .hub-head h1 em { font-style: normal; color: var(--amber); }
+  .hub-head .lede { margin-top: 18px; max-width: 680px; color: var(--text-dim); font-size: 16px; }
+  .hub-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
+  .hub-links a {
+    display: inline-flex; align-items: center; gap: 8px; text-decoration: none;
+    font-family: var(--mono); font-size: 12px; color: var(--text-dim);
+    border: 1px solid var(--line-strong); border-radius: 8px; padding: 8px 15px;
+    transition: color .2s, border-color .2s, background .2s;
+  }
+  .hub-links a:hover { color: var(--amber); border-color: var(--amber-line); background: var(--amber-soft); }
+  .hub-sec {
+    display: flex; align-items: baseline; gap: 14px; margin: 44px 0 18px;
+  }
+  .hub-sec .no { font-family: var(--mono); font-size: 12px; color: var(--amber); letter-spacing: 0.16em; }
+  .hub-sec .t { font-size: 19px; font-weight: 700; }
+  .hub-sec .ln { flex: 1; height: 1px; background: var(--line); }
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .card {
+    position: relative; display: block; text-decoration: none; overflow: hidden;
+    border: 1px solid var(--line); border-radius: 16px; background: var(--bg-panel);
+    padding: 22px 24px 20px; transition: border-color .25s, transform .25s, box-shadow .25s;
+  }
+  .card::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0;
+    background: radial-gradient(420px 140px at 20% 0%, rgba(240, 180, 84, 0.08), transparent 70%);
+    transition: opacity .25s;
+  }
+  .card:hover { border-color: var(--amber-line); transform: translateY(-3px); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35); }
+  .card:hover::after { opacity: 1; }
+  .card .no { font-family: var(--mono); font-size: 11px; color: var(--amber); letter-spacing: 0.14em; }
+  .card h3 { margin: 8px 0 6px; font-size: 17px; font-weight: 700; color: var(--text); }
+  .card p { font-size: 13px; color: var(--text-dim); line-height: 1.65; margin: 0 0 14px; }
+  .card .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .card .tags i {
+    font-style: normal; font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em;
+    color: var(--text-faint); border: 1px solid var(--line); border-radius: 5px; padding: 2.5px 8px;
+  }
+  .card .go {
+    position: absolute; right: 20px; bottom: 16px; font-family: var(--mono); font-size: 11px;
+    color: var(--text-faint); transition: color .2s, transform .2s;
+  }
+  .card:hover .go { color: var(--amber); transform: translateX(3px); }
+  .card.wide { grid-column: span 2; }
+  .card.manual { border-color: rgba(126, 212, 145, 0.28); }
+  .card.manual .no { color: var(--green); }
+  .card.manual:hover { border-color: rgba(126, 212, 145, 0.5); }
+  .card.manual::after { background: radial-gradient(420px 140px at 20% 0%, rgba(126, 212, 145, 0.07), transparent 70%); }
+  .hub-foot { margin-top: 54px; padding-top: 22px; border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 8px 22px; }
+  .hub-foot span, .hub-foot a { font-family: var(--mono); font-size: 11px; color: var(--text-faint); text-decoration: none; }
+  .hub-foot a:hover { color: var(--amber); }
+  @media (prefers-reduced-motion: no-preference) {
+    @keyframes hubRise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+    .hub-head > *, .hub-sec, .card { opacity: 0; animation: hubRise .6s ease forwards; }
+    .hub-head .hub-kicker { animation-delay: 0s; }
+    .hub-head h1 { animation-delay: .07s; }
+    .hub-head .lede { animation-delay: .14s; }
+    .hub-head .hub-links { animation-delay: .21s; }
+    .hub-sec { animation-delay: .26s; }
+    .card:nth-of-type(1) { animation-delay: .3s; } .card:nth-of-type(2) { animation-delay: .36s; }
+    .card:nth-of-type(3) { animation-delay: .42s; } .card:nth-of-type(4) { animation-delay: .48s; }
+    .card:nth-of-type(5) { animation-delay: .54s; } .card:nth-of-type(6) { animation-delay: .6s; }
+  }
+  @media (max-width: 760px) {
+    .grid { grid-template-columns: 1fr; }
+    .card.wide { grid-column: auto; }
+    .hub { padding: 52px 20px 70px; }
+  }
+</style>
+</head>
+<body>
+<div class="blueprint"></div>
+<div class="glow glow-a"></div>
+<div class="glow glow-b"></div>
+
+<main class="hub">
+  <header class="hub-head">
+    <div class="scanline"></div>
+    <div class="hub-kicker"><span class="line"></span><span>Engineering Dossier · 工程文档中心</span></div>
+    <h1>MyOpenWeb<br>把每一层实现<em>写成可检索的档案</em></h1>
+    <p class="lede">企业研发/运维 AI Copilot 工作台的全部工程文档：对外的架构展示档案、对内的工程手册、以及沉淀设计决策的研究笔记。深色蓝图风为文档，暖纸出版风为教材——双子设计语言，各司其职。</p>
+    <div class="hub-links">
+      <a href="https://github.com/ng520tx/MyOpenWeb" target="_blank" rel="noopener">↗ GitHub 仓库</a>
+      <a href="../doc/index.html">↗ 修炼手册（10+1 章教材）</a>
+      <a href="https://github.com/ng520tx/MyOpenWeb/releases/download/v0.1.0/demo.mp4" target="_blank" rel="noopener">▶ 5 分钟演示视频</a>
+    </div>
+  </header>
+
+  <div class="hub-sec"><span class="no">SECTION A</span><span class="t">总览与手册</span><span class="ln"></span></div>
+  <div class="grid">
+    <a class="card wide" href="architecture.html">
+      <span class="no">D-00 · SHOWCASE</span>
+      <h3>架构展示页 —— 对外工程档案</h3>
+      <p>单页可视化：能力矩阵、系统架构图、检索链路、评测图表与 15 项交付里程碑。给面试官的第一入口，5 分钟看懂整个系统。</p>
+      <span class="tags"><i>能力矩阵</i><i>架构图</i><i>评测数据</i><i>里程碑时间线</i></span>
+      <span class="go">进入 →</span>
+    </a>
+    <a class="card" href="project-architecture.html">
+      <span class="no">D-01 · ARCHITECTURE</span>
+      <h3>项目架构</h3>
+      <p>技术栈、目录结构、核心数据流、模块拆解、9 张数据库表设计与 Android 壳工程——读完即可上手改代码的工程地图。</p>
+      <span class="tags"><i>数据流</i><i>数据库设计</i><i>模块说明</i></span>
+      <span class="go">进入 →</span>
+    </a>
+    <a class="card" href="rag-agent-copilot.html">
+      <span class="no">D-02 · RAG × AGENT</span>
+      <h3>RAG + Agent 模块</h3>
+      <p>检索全链路与工具循环的设计取舍、API 参考、使用步骤，外加简历话术、14 张面试问答卡与可照着录的演示脚本。</p>
+      <span class="tags"><i>混合检索</i><i>设计取舍</i><i>面试话术</i><i>演示脚本</i></span>
+      <span class="go">进入 →</span>
+    </a>
+    <a class="card" href="troubleshooting.html">
+      <span class="no">D-03 · TROUBLESHOOTING</span>
+      <h3>排障手册</h3>
+      <p>28 个开发调试实战问题，按「现象 / 原因 / 解决」三段式整理：环境、手机端、模型、UI、构建、知识库/向量后端、Git。</p>
+      <span class="tags"><i>28 条目</i><i>现象→原因→解决</i><i>7 大分类</i></span>
+      <span class="go">进入 →</span>
+    </a>
+    <a class="card manual" href="../doc/index.html">
+      <span class="no">MANUAL · 修炼手册</span>
+      <h3>《MyOpenWeb 修炼手册》</h3>
+      <p>基于本仓库真实代码的 10+1 章 AI 应用开发教材：Python → FastAPI → LLM → RAG → Agent → MCP → 评测 → 工程化 → 面试。暖纸出版风，另一套设计语言。</p>
+      <span class="tags"><i>10+1 章</i><i>面试卡</i><i>动手实验</i></span>
+      <span class="go">进入 →</span>
+    </a>
+  </div>
+
+  <div class="hub-sec"><span class="no">SECTION B</span><span class="t">研究笔记</span><span class="ln"></span></div>
+  <div class="grid">
+    <a class="card" href="open-webui-analysis.html">
+      <span class="no">D-04 · RESEARCH</span>
+      <h3>Open WebUI 对照分析</h3>
+      <p>参考项目 v0.8.12 的架构拆解与借鉴边界——tool_calls 协议、运行日志、三表知识库等核心设计决策的第一现场。</p>
+      <span class="tags"><i>架构拆解</i><i>借鉴边界</i><i>决策溯源</i></span>
+      <span class="go">进入 →</span>
+    </a>
+    <a class="card" href="fnm-node-version-management.html">
+      <span class="no">D-05 · FIELD NOTES</span>
+      <h3>fnm Node 版本管理</h3>
+      <p>cd 即切换的 Node 版本管理：自动切换原理、命令速查、镜像加速、故障排查与新机器重装备忘。</p>
+      <span class="tags"><i>命令速查</i><i>故障排查</i><i>重装备忘</i></span>
+      <span class="go">进入 →</span>
+    </a>
+  </div>
+
+  <footer class="hub-foot">
+    <span>MyOpenWeb · Engineering Dossier</span>
+    <a href="https://github.com/ng520tx/MyOpenWeb" target="_blank" rel="noopener">github.com/ng520tx/MyOpenWeb</a>
+    <span>MIT License</span>
+  </footer>
+</main>
+<script>
+  // 教材路径：本地仓库在 ../doc/，GitHub Pages 部署在 ../manual/
+  (function () {
+    if (/github\.io$/.test(location.hostname)) {
+      document.querySelectorAll('a[href="../doc/index.html"]').forEach(function (a) {
+        a.href = "../manual/";
+      });
+    }
+  })();
+</script>
+</body>
+</html>

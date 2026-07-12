@@ -218,22 +218,25 @@ MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
 ├── src/              # React H5（apis / components / stores / bridge）
 ├── scripts/          # 一键启动脚本（后端 / OCR）
 ├── doc/              # 《MyOpenWeb 修炼手册》：10+1 章 AI 应用开发教材（含 Ch03½ 补强章，HTML，双击即读）
-└── docs/             # 架构文档、RAG+Agent 模块文档、Open WebUI 对照分析、排障手册
+└── docs/             # 工程文档站（HTML）：架构展示页 / 项目架构 / RAG+Agent 模块 / 排障手册 / 研究笔记
 ```
 
 ## 文档
 
+全部文档均为精心排版的 HTML（深色工程蓝图风文档站 + 暖纸出版风教材，零 CDN），在线可点、本地双击即读：
+
 **在线阅读（GitHub Pages，无需 clone）**：
 
-- [架构展示页（在线）](https://ng520tx.github.io/MyOpenWeb/architecture.html)：单文件可视化工程档案（能力矩阵 / 架构图 / 检索链路 / 评测图表）
+- [工程文档中心（在线）](https://ng520tx.github.io/MyOpenWeb/docs/)：全部工程文档的入口
+- [架构展示页（在线）](https://ng520tx.github.io/MyOpenWeb/docs/architecture.html)：单页可视化工程档案（能力矩阵 / 架构图 / 检索链路 / 评测图表）
 - [MyOpenWeb 修炼手册（在线）](https://ng520tx.github.io/MyOpenWeb/manual/)：基于本仓库真实代码的 10+1 章 AI 应用开发教材（Python 速成 → FastAPI → LLM → **Ch03½ Prompt/Context/Transformer/多Agent** → RAG → Agent → MCP → 评测/LLMOps → 工程化 → 精进路线 → 面试通关），浅色/深色双主题
 
-仓库内文档（本地打开 [docs/architecture.html](docs/architecture.html) 与 [doc/index.html](doc/index.html) 效果相同）：
+**文档站分册**（本地打开 [docs/index.html](docs/index.html) 效果相同）：
 
-- [项目架构](docs/project-architecture.md)：技术栈、数据流、数据库设计、Bridge 协议
-- [RAG + Agent 模块](docs/rag-agent-copilot.md)：能力总览、API 参考、使用步骤、设计取舍
-- [Open WebUI 对照分析](docs/open-webui-analysis.md)：参考项目的拆解与借鉴边界
-- [排障手册](docs/troubleshooting.md)
+- [项目架构](https://ng520tx.github.io/MyOpenWeb/docs/project-architecture.html)：技术栈、数据流、数据库设计、模块拆解、Android 壳
+- [RAG + Agent 模块](https://ng520tx.github.io/MyOpenWeb/docs/rag-agent-copilot.html)：能力总览、API 参考、使用步骤、设计取舍、面试话术与演示脚本
+- [排障手册](https://ng520tx.github.io/MyOpenWeb/docs/troubleshooting.html)：28 个实战问题，现象/原因/解决三段式
+- [Open WebUI 对照分析](https://ng520tx.github.io/MyOpenWeb/docs/open-webui-analysis.html)：参考项目的拆解与借鉴边界
 
 ## Roadmap
 

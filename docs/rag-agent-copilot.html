@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAG + Agent 模块 · MyOpenWeb 工程文档</title>
+<meta name="description" content="RAG 知识库与研发/运维 Agent 工具模块：能力总览、架构、数据流、API、使用步骤、求职包装与扩展预案">
+<link rel="stylesheet" href="assets/dossier.css">
+</head>
+<body>
+<div class="blueprint"></div>
+<div class="glow glow-a"></div>
+<div class="glow glow-b"></div>
+
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <main class="content">
+    <article class="article">
+
+      <header class="doc-head">
+        <div class="scanline"></div>
+        <div class="doc-kicker"><span class="line"></span><span>DOC-02 · RAG × AGENT MODULE</span></div>
+        <h1>企业研发/运维 AI Copilot<br><em>RAG + Agent</em> 功能模块</h1>
+        <p class="lede">能力总览、架构与数据流、API 参考、使用步骤、求职作品包装（简历/面试/演示脚本）与扩展预案。通用项目架构见 <a href="project-architecture.html">D-01</a>，常见问题见 <a href="troubleshooting.html">D-03</a>。</p>
+        <div class="doc-meta">
+          <span>检索 <b>混合 RRF + rerank + 自纠错</b></span>
+          <span>Agent <b>双协议工具循环</b></span>
+          <span>评测 <b>40 QA + 多轮 + judge</b></span>
+          <span>部署 <b>Docker 单容器</b></span>
+        </div>
+      </header>
+
+      <h2 class="reveal"><span class="no"></span>能力总览</h2>
+      <p>把原本的「本地聊天骨架」补齐成可作为求职作品的「企业研发/运维 AI Copilot 工作台」，新增自研能力：</p>
+      <ol>
+        <li><b>文件落盘 + 文本抽取</b>：上传 txt/md/pdf/docx/图片，后端抽取纯文本并落盘（PDF/扫描件/图片可选走 PaddleOCR），独立 <code>files</code> 表。</li>
+        <li><b>RAG 知识库</b>：建库 → 挂文件 → 切片向量化 → 多轮检索改写（query rewrite）→ 混合检索（向量余弦 + BM25 经 RRF 融合，可选 bge-reranker 重排）→ 可选检索自纠错（Grader 评估 + 有界重检索）→ 带引用回答 → 库外问题拒答。</li>
+        <li><b>研发/运维 Agent 工具</b>：日志分析、Git diff 摘要、工单总结、测试用例生成，并能让 Agent 自己决定调用 <code>search_knowledge</code> 查知识库、<code>web_search</code> 联网搜索（可选开关，DuckDuckGo 免 key）；思考/工具调用/工具结果全过程经 SSE 实时推送，前端渲染步骤时间线。</li>
+        <li><b>检索质量评测</b>：自建 40 条 QA 评测集 + 8 条多轮指代追问集，Hit@K / MRR / 延迟跨参数对照（见第 7 节）。</li>
+        <li><b>框架认知对照</b>：<code>examples/langgraph-agent/</code> 用 LangGraph 复刻同等 Agent 能力，沉淀「手写循环 vs 框架」的对比结论（见第 10 节）。</li>
+        <li><b>MCP Server</b>：知识库检索与研发/运维工具经官方 <code>mcp</code> SDK 暴露为标准 MCP 服务，Cursor 等客户端可直接在 IDE 里查企业知识库（见第 11 节）。</li>
+        <li><b>LLM 异步增强</b>：对话标题生成（替换截断标题）+ 追问建议 chip（参考 open-webui tasks 思路，prompt 自研），回答完成后异步触发，失败静默不影响主链路。</li>
+        <li><b>Token 用量观测</b>（LLMOps 最小闭环）：非流式 / 流式 / Agent 多轮全链路透传 usage，气泡底部展示 tokens 与耗时，Agent 每轮模型调用 usage 落库（见第 12 节）。</li>
+      </ol>
+      <div class="callout ok">
+        <span class="ic">✓</span>
+        <div class="bd">
+          <span class="t">全程自研</span>
+          <p>零额外服务部署（向量默认存 SQLite，BM25 用 SQLite 内置 FTS5，内存余弦检索；可选 pgvector 后端一变量切换），便于面试讲清底层，也便于小规模私有部署。</p>
+        </div>
+      </div>
+
+      <h2 class="reveal"><span class="no"></span>架构</h2>
+      <pre data-lang="text" data-path="模块拓扑（移动端 → 后端 → 存储/模型）">
+┌─ 移动端入口 ─────────────────────┐
+│  Android WebView 壳 ──▶ React H5 聊天页  │
+└──────────────┬───────────────────┘
+               │ /api/*
+┌─ FastAPI 本地后端 ────────────────────────────────┐
+│  chat_proxy 聊天入口 ──▶ rag 检索/切片 ◀── knowledge 知识库服务  │
+│  agent Agent循环 ──▶ agent_tools 工具集                        │
+│       │                  │                                    │
+│       └──▶ rag ──▶ VectorStore（sqlite / pgvector）            │
+│  files 文件服务 ──▶ ocr_client OCR解析 ──▶ PP-StructureV3 服务  │
+│  rag ──▶ embeddings 向量化 ──▶ Ollama / OpenAI 模型            │
+└───────────────┬───────────────────────────────────┘
+                │
+┌─ 存储 ─────────────────────────────┐
+│  SQLite: chats / files / knowledge / knowledge_file │
+│  chunks + embedding：SQLite（默认）或 PostgreSQL+pgvector │
+└─────────────────────────────────────┘</pre>
+
+      <h3>关键设计取舍</h3>
+      <ul>
+        <li><b>向量存 SQLite</b>：<code>chunks.embedding</code> 存 JSON 数组，查询时用 numpy 内存余弦相似度。个人/演示规模足够，省去额外向量库部署。</li>
+        <li><b>BM25 用 SQLite FTS5</b>：零新增服务。中文分词用自研 CJK 二元组 + 英文小写单词（<code>services/tokenize.py</code>），解决 unicode61 分词器把整段中文当一个 token 的问题；索引和查询走同一分词器保证匹配一致。</li>
+        <li><b>混合检索用 RRF</b>：向量排名与 BM25 排名按 <code>1/(60+rank)</code> 融合，天然免调权重、对分数尺度不敏感；候选池取 <code>max(top_k*3, 10)</code> 给融合与重排留空间。</li>
+        <li><b>rerank 可降级</b>：cross-encoder（bge-reranker）依赖单独放 <code>server/rerank/requirements.txt</code>，未安装或模型加载失败时负缓存 + 自动回退融合排序，核心链路不因 rerank 阻塞。</li>
+        <li><b>检索自纠错有界且防误伤</b>（<code>services/retrieval_grader.py</code>）：Grader 用宽松判定（有关键信息就算够）防误触发；followup 必须换表述、复读原查询直接放弃（重检索同一查询只会得到同样结果）；重检索硬上限 1 次防延迟螺旋；合并时首轮结果全保留（Grader 可能误判），二轮补进略放大的预算；Grader 任何失败都沿用首轮——与 rerank / query rewrite 同款降级哲学。</li>
+        <li><b>联网搜索只进 Agent 不进 RAG</b>（<code>services/web_search.py</code>）：知识库问答保持「未命中即拒答」的确定性（企业场景防幻觉优先）；联网是 Agent 工具，由模型按需选用（时效信息/库外问题），回答附来源链接。provider 函数分发（默认 ddgs 免 key，预留 bocha/serper），任何失败返回结构化 error 给模型转述，永不中断循环。</li>
+        <li><b>两种工具协议可切换</b>（设置 → Agent）：<code>prompt</code> 用系统提示词约定 JSON 输出，任何能写 JSON 的模型都能跑（含不支持 tools 的小模型），脏输出有归一化容错；<code>native</code> 走模型原生 function calling（tools 参数 + tool_calls 响应 + role=tool 回填），格式更稳、省去协议说明的 token，但依赖模型端支持（qwen2.5 实测可用）。</li>
+        <li><b>不用 Dify</b>：RAG 与 Agent 都自研，面试更好讲底层；Dify 仅作为后期可选编排 provider 的扩展点。</li>
+        <li><b>普通聊天 vs Agent 两条 RAG 路径</b>：关闭 Agent + 选了知识库 → <code>/api/chat/completions</code>，后端直接检索并把片段注入 system_prompt（确定性强）；开启 Agent + 选了知识库 → <code>/api/agent/completions</code>，把 <code>search_knowledge</code> 作为工具交给模型自主调用（更智能体化）。</li>
+        <li><b>无答案拒答</b>：检索为空时注入「知识库中没有找到相关信息」的拒答提示，避免幻觉。</li>
+        <li><b>维度保护</b>：换了 embedding 模型导致向量维度不一致时，检索返回空并提示重建索引。</li>
+      </ul>
+
+      <h2 class="reveal"><span class="no"></span>核心数据流</h2>
+      <h3>文件上传 + 抽取</h3>
+      <pre data-lang="text" data-path="上传 → 抽取 → 落盘">
+选择文件 → POST /api/files (multipart)
+→ file_extract.extract_text()（pdf=pypdf / docx=python-docx / 其余按文本解码）
+→ 落盘 server/data/files/&lt;id&gt;&lt;ext&gt;，元数据与文本写入 files 表
+→ 返回 FileRecord（含 text_preview / text_length）</pre>
+      <h3>建立索引</h3>
+      <pre data-lang="text" data-path="切片 → 向量化 → 原子替换">
+知识库绑定文件 → POST /api/knowledge/{id}/index
+→ 取出每个文件的 text_content
+→ rag.split_text() 按字符 + 自然边界 + overlap 切片
+→ embeddings.embed_texts() 分批向量化（默认 16/批）
+→ VectorStore.replace_chunks() 原子替换该知识库的全部 chunks
+   （后端由 MYOPENWEB_VECTOR_BACKEND 决定：sqlite 默认 / pgvector）
+→ 返回 {files, chunks, embedding_model}</pre>
+      <h3>检索增强问答</h3>
+      <pre data-lang="text" data-path="query rewrite → 混合检索 → 自纠错 → 注入/拒答/降级">
+聊天带 knowledge_id → chat_proxy
+→ rag.retrieve_for_chat()：取最后一条用户消息为 query
+→ 多轮对话时先 query_rewrite.rewrite_query()：
+   用最近 3 轮历史把"它的端口是多少"这类省略主语的追问改写成自包含查询
+   （一次 temperature=0 的小请求；失败/超长/空输出自动回退原文）
+→ query_knowledge()：
+   1) 向量化 query，VectorStore.query_by_vector() 取向量排名
+      （SQLite：numpy 内存余弦 + 矩阵缓存；pgvector：ORDER BY embedding &lt;=&gt; q）
+   2) hybrid 模式再取 VectorStore.query_by_keywords() 关键词排名
+      （SQLite：FTS5 BM25；pgvector：tsvector + ts_rank），RRF 融合
+   3) 开启 rerank 时对候选池做 cross-encoder 重排（失败自动回退）
+→ 开启检索自纠错（agentic retrieval）时：
+   retrieval_grader.grade_retrieval() 一次 temperature=0 小请求判断候选片段
+   能否回答问题；判不足时按 Grader 给出的"换表述补充查询"重检索一轮
+   （硬上限 1 次），两轮结果按 chunk_id 去重合并（首轮全保留 + 二轮补进
+   略放大的预算）；Grader 失败/脏输出/复读原查询 → 自动沿用首轮结果
+→ 命中：拼"带 [序号] 来源标注的参考资料"system_prompt + 返回 sources
+→ 未命中：注入拒答提示
+→ 检索链路异常（embedding 服务/向量后端不可达）：不再 502——
+   降级为不带知识库的普通回答，并 emit {"retrieval_warning": "..."} 帧，
+   前端在气泡顶部显示黄色警示"知识库检索失败，本次回答未使用知识库"
+→ 流式响应前先 emit 一条 {"sources":[...]} SSE，前端展示"引用来源"</pre>
+      <div class="callout info">
+        <span class="ic">◈</span>
+        <div class="bd">
+          <span class="t">配置入口</span>
+          <p>检索模式、rerank 与检索自纠错在「设置 → 知识库 / RAG」配置；<code>POST /api/knowledge/{id}/query</code> 支持 <code>mode</code> / <code>rerank</code> 覆盖参数做 A/B 调试。切换 hybrid 后需重建索引以生成 BM25 词表。</p>
+        </div>
+      </div>
+      <h3>Agent 调用知识库</h3>
+      <pre data-lang="text" data-path="工具化检索 + 步骤时间线">
+Agent 模式 + knowledge_id → agent_runner
+→ 工具列表追加 search_knowledge
+→ run_agent_events() 逐步产出事件：
+   thinking（每轮决策前）/ tool_call（带参数）/ tool_result（带摘要与 ok 状态）
+→ 事件实时包成 SSE agent_event 帧推给前端（空 delta，老客户端自动忽略）
+→ 模型决定调用 search_knowledge(query, top_k)
+→ 后端异步 query_knowledge()，把片段回填给模型
+→ 命中片段去重后作为 sources 一并返回；agent_steps 记录完整输入输出
+→ 前端生成中渲染"思考中 / 调用工具 / 工具完成"时间线，完成后可查看完整运行日志</pre>
+
+      <h2 class="reveal"><span class="no"></span>API 参考</h2>
+      <h3>文件 /api/files</h3>
+      <table>
+        <tr><th>方法</th><th>路径</th><th>说明</th></tr>
+        <tr><td>GET</td><td><code>/api/files</code></td><td>文件列表（元数据 + 文本预览）</td></tr>
+        <tr><td>POST</td><td><code>/api/files</code></td><td>multipart 上传，抽取文本并落盘</td></tr>
+        <tr><td>GET</td><td><code>/api/files/{id}</code></td><td>文件详情（含全文 <code>text_content</code>）</td></tr>
+        <tr><td>POST</td><td><code>/api/files/{id}/reextract</code></td><td>对已存文件重新抽取（开启 OCR 后回填新文本，需随后重建索引）</td></tr>
+        <tr><td>DELETE</td><td><code>/api/files/{id}</code></td><td>删除文件（含磁盘文件与向量库级联清理）</td></tr>
+      </table>
+      <h3>知识库 /api/knowledge</h3>
+      <table>
+        <tr><th>方法</th><th>路径</th><th>说明</th></tr>
+        <tr><td>GET</td><td><code>/api/knowledge</code></td><td>知识库列表（含文件数/分块数）</td></tr>
+        <tr><td>POST</td><td><code>/api/knowledge</code></td><td>新建知识库</td></tr>
+        <tr><td>GET</td><td><code>/api/knowledge/{id}</code></td><td>知识库详情（含文件列表）</td></tr>
+        <tr><td>PUT</td><td><code>/api/knowledge/{id}</code></td><td>改名/改描述</td></tr>
+        <tr><td>DELETE</td><td><code>/api/knowledge/{id}</code></td><td>删除知识库（级联 chunks/绑定）</td></tr>
+        <tr><td>POST</td><td><code>/api/knowledge/{id}/files</code></td><td>绑定文件 <code>{file_id}</code></td></tr>
+        <tr><td>DELETE</td><td><code>/api/knowledge/{id}/files/{file_id}</code></td><td>解绑文件</td></tr>
+        <tr><td>POST</td><td><code>/api/knowledge/{id}/index</code></td><td>建立/重建索引</td></tr>
+        <tr><td>POST</td><td><code>/api/knowledge/{id}/query</code></td><td>调试检索 <code>{query, top_k}</code>（支持 <code>mode</code>/<code>rerank</code> 覆盖）</td></tr>
+      </table>
+      <h3>聊天 / Agent 扩展</h3>
+      <ul>
+        <li><code>POST /api/chat/completions</code> 与 <code>POST /api/agent/completions</code> 新增可选字段：<code>knowledge_id</code>、<code>rag_top_k</code>。</li>
+        <li>流式响应中通过 <code>data: {"sources":[...]}</code> 事件回传引用来源（前端 <code>streaming.ts</code> 解析 <code>parsed.sources</code>）；检索降级时带 <code>retrieval_warning</code> 字段。</li>
+      </ul>
+      <h3>异步增强任务 /api/tasks</h3>
+      <table>
+        <tr><th>方法</th><th>路径</th><th>说明</th></tr>
+        <tr><td>POST</td><td><code>/api/tasks/title</code></td><td><code>{model, user_text, assistant_text?}</code> → <code>{title}</code>，LLM 生成 ≤20 字对话标题；失败返回 <code>{title: null}</code></td></tr>
+        <tr><td>POST</td><td><code>/api/tasks/follow_ups</code></td><td><code>{model, messages}</code> → <code>{follow_ups: [..]}</code>，生成 3 条追问建议；失败返回空数组</td></tr>
+      </table>
+      <p>两个接口均由前端在回答完成后异步调用（fire-and-forget）：标题成功后替换 <code>addMessage</code> 的 30 字截断标题并同步到后端，失败保持截断标题；追问建议渲染为回答下方的可点击 chip（仅最新一条回答显示），点击即发送。生成失败不影响聊天主链路。</p>
+
+      <h2 class="reveal"><span class="no"></span>使用步骤（本地）</h2>
+      <ol class="flow">
+        <li><b>安装后端依赖</b>（含 <code>python-multipart</code>、<code>pypdf</code>、<code>python-docx</code>、<code>numpy</code>）：<code>./.venv/bin/pip install -r server/requirements.txt</code></li>
+        <li><b>拉取 embedding 模型</b>（Ollama，默认 <code>bge-m3</code>，适合中文）：<code>ollama pull bge-m3</code>。如需更轻量可改用 <code>nomic-embed-text</code>，并在「设置 → 知识库 / RAG → Embedding 模型」里填写后点「保存连接配置到后端」。</li>
+        <li><b>启动后端与前端</b>：<code>start-backend.bat</code> / <code>pnpm dev:server</code> + <code>pnpm dev</code>。</li>
+        <li><b>建库</b>：顶部导航点「知识库」图标 → 新建知识库 → 上传文件 → 点「建立 / 重建索引」。</li>
+        <li><b>选库</b>：在知识库列表点「聊天使用」选中该库（导航栏出现「知识库」标记），回到聊天提问。</li>
+        <li><b>验证</b>：回答下方点「引用来源」可看到命中的文件与片段；问库外问题会拒答。</li>
+        <li><b>智能体路径</b>：在设置里开启「Agent 模式」，再选知识库提问，Agent 会自己调用 <code>search_knowledge</code>，可展开「Agent 调用工具」查看过程。</li>
+      </ol>
+
+      <h2 class="reveal"><span class="no"></span>求职作品包装</h2>
+      <h3>简历项目描述（可直接粘贴）</h3>
+      <p><b>建议简历标题</b>（任选其一，按目标岗位调整）：移动端 AI 应用工程师 / AI Agent 应用工程师 / AI 应用工程化工程师。</p>
+      <blockquote><p><b>精简版</b>：企业研发/运维 AI Copilot 工作台（独立设计与实现）：Android 原生壳 + React H5 流式聊天 + 自研 RAG 知识库（混合检索 + rerank + 自建评测）+ 工具型 Agent，FastAPI 分层后端、多模型适配、Docker 一键私有化部署，用于知识问答、运维排障与研发提效。</p></blockquote>
+      <blockquote><p><b>完整版</b>：独立设计并实现「企业研发/运维 AI Copilot 工作台」：Android 原生壳 + React H5 流式聊天 + WebView 桥接（语音输入/播报、文件选择、安全区），FastAPI 本地后端分层（routers/services/repositories/schemas），统一 OpenAI SSE，接入 Ollama / OpenAI Compatible 多模型。自研 RAG 全链路：文件落盘与 txt/md/pdf/docx/扫描件（PaddleOCR）文本抽取、切片、向量化、混合检索（BM25+向量 RRF 融合，自研中文分词适配 SQLite FTS5）、可选 bge-reranker 重排、引用来源标注、库外问题拒答；自建 40 条 QA 评测集量化调优（混合检索使 Hit@1 提升 11pp 至 0.93，rerank 后 MRR 达 1.00）。实现研发/运维 Agent 工具（日志分析、Git diff 摘要、工单总结、测试用例生成）并与 RAG 融合（Agent 自主调用 <code>search_knowledge</code>，全过程写入运行日志）。pytest 单测 + GitHub Actions CI + Docker 多阶段构建一键私有化部署。</p></blockquote>
+      <div class="callout warn">
+        <span class="ic">◈</span>
+        <div class="bd">
+          <span class="t">如何结合真实经历讲（别写成通用项目）</span>
+          <ul>
+            <li>用多年研发与「掌上运维 / 装机助手 / 故障中心 / 资源中心」的背景，把这个产品定位成「我最懂的企业运维/研发场景」的 AI 落地，而不是泛泛的聊天机器人。</li>
+            <li>Android + H5 + WebView 桥接是差异化护城河——市场上纯做 RAG 的人很多，但「能把 AI 做进移动端、还懂企业系统联调与线上排查」的人少。</li>
+            <li>Agent 工具（日志分析、Git diff 摘要、工单总结）直接对应过去做线上问题排查、版本变更、工单处理的真实经验，面试时用真实案例讲会非常可信。</li>
+            <li>善用 Cursor/Codex/Claude Code：可以讲「用 AI Coding 工作流把这个产品从 0 到 1 独立交付」，正好对上「AI Coding / 研发效能」岗位。</li>
+          </ul>
+          <p><b>可量化的点（按真实情况填）</b>：知识库文件数 / 分块数（如 193 块）、检索 topK 与响应时延、支持的文件类型数（4 种）、Agent 工具数（4+1）、从 0 到 1 的交付周期（如 4 周）。</p>
+        </div>
+      </div>
+
+      <h3>面试话术（高频问题）</h3>
+      <details class="qa-card"><summary><span class="q-no">Q01</span><span class="q-t">整体架构一句话</span><span class="chev">▸</span></summary><div class="q-body"><p>移动端（Android 壳 + React H5 流式）→ FastAPI 分层后端（routers/services/repositories/schemas，统一 OpenAI SSE）→ 自研 RAG（混合检索 + rerank + 评测）+ 工具型 Agent → 多模型（Ollama / OpenAI Compatible），业务数据落 SQLite、向量后端经 VectorStore 抽象可切 pgvector，Docker 一键私有部署。</p></div></details>
+      <details class="qa-card"><summary><span class="q-no">Q02</span><span class="q-t">RAG 是怎么实现的？</span><span class="chev">▸</span></summary><div class="q-body"><p>文本抽取 → 按字符 + 自然边界 + overlap 切片 → embedding 批量向量化入库（SQLite 存 JSON 向量）→ 查询时向量余弦排名，hybrid 模式再融合 BM25（FTS5）排名（RRF），可选 cross-encoder 重排 → 把命中片段带 <code>[序号]</code> 来源拼进 system_prompt → 让模型只依据资料回答，未命中则拒答。</p></div></details>
+      <details class="qa-card"><summary><span class="q-no">Q03</span><span class="q-t">混合检索为什么用 RRF 而不是加权分数？</span><span class="chev">▸</span></summary><div class="q-body"><p>向量余弦和 BM25 分数量纲不同，直接加权要调参且对分布敏感；RRF 只用排名（<code>1/(60+rank)</code>），免调权、稳健，是业界常用融合方式。实测比纯向量 Hit@1 提升 8~11pp。</p></div></details>
+      <details class="qa-card"><summary><span class="q-no">Q04</span><span class="q-t">中文 BM25 怎么处理分词？</span><span class="chev">▸</span></summary><div class="q-body"><p>SQLite FTS5 的 unicode61 会把整段中文当一个 token。自研轻量分词（CJK 字符二元组 + 英文小写词），索引与查询同一分词器，零依赖；规模大再换 jieba。</p></div></details>
+      <details class="qa-card"><summary><span class="q-no">Q05</span><span class="q-t">Rerank 为什么有用？代价是什么？</span><span class="chev">▸</span></summary><div class="q-body"><p>召回阶段（双塔/BM25）是「各自编码再比较」，rerank 用 cross-encoder 对「问题-片段」拼接后整体打分，捕捉细粒度交互，所以首位命中显著提升（实测 Hit@1 0.93→1.00）。代价是每个候选都要过一遍模型，CPU 上单次检索到 5s 量级，因此做成可开关 + 失败自动回退，在线低延迟场景建议 GPU/ONNX/缩小候选池。</p></div></details>
+      <details class="qa-card"><summary><span class="q-no">Q06</span><span class="q-t">检索质量怎么评的？</span><span class="chev">▸</span></summary><div class="q-body"><p>自建 40 条 QA 评测集（三份企业文档语料），指标 Hit@1/4/8 与 MRR，另测端到端检索延迟（含查询向量化）；跑 chunk_size × 检索模式 × rerank 全参数对照，报告落盘可复现（<code>server/eval/</code>）。</p></div></details>
+      <details class="qa-card"><summary><span class="q-no">Q07</span><span class="q-t">为什么不用向量数据库 / Dify？</span><span class="chev">▸</span></summary><div class="q-body"><p>个人/演示规模 SQLite + 内存余弦足够，且能讲清每一步；强调「自己写的」比「拖流程」更有说服力。向量存储已抽象为 <code>VectorStore</code> 接口并落地了 PostgreSQL + pgvector 第二实现（一个环境变量切换，双后端同一套契约测试），演示「规模上来按接口替换」不是口头预案而是已验证的路径；Dify provider 仍是预留扩展点。</p></div></details>
+      <details class="qa-card"><summary><span class="q-no">Q08</span><span class="q-t">怎么防幻觉 / 保证可信？</span><span class="chev">▸</span></summary><div class="q-body"><p>强约束 system_prompt（只用参考资料、未命中明确说不知道）、返回引用来源给前端展示、embedding 维度不匹配时拒绝用旧索引并提示重建。</p></div></details>
+      <details class="qa-card"><summary><span class="q-no">Q09</span><span class="q-t">Agent 和普通 RAG 的区别？</span><span class="chev">▸</span></summary><div class="q-body"><p>普通 RAG 是后端确定性检索后注入 system_prompt（结果稳定、好复现）；Agent 把检索做成 <code>search_knowledge</code> 工具，由模型自主决定是否检索、检索什么，并记录工具调用日志，更接近「智能体」。两种路径按场景选用。</p></div></details>
+      <details class="qa-card"><summary><span class="q-no">Q10</span><span class="q-t">prompt-based 和原生 function calling 的区别？</span><span class="chev">▸</span></summary><div class="q-body"><p>两种都实现了，可切换。prompt 协议把工具说明写进系统提示词、约定 JSON 输出，兼容任何模型，但要自己做解析与容错（小模型经常输出 <code>{"action":"calculator",...}</code> 这类脏格式）；native 协议把 tools schema 直接传给模型端接口，返回结构化 <code>tool_calls</code>、按 <code>role=tool</code> 回填，格式稳定、少烧协议 token，但要求模型支持（qwen2.5 支持，很多小模型不支持）。生产上建议：模型可控时优先 native，兜底 prompt。</p></div></details>
+      <details class="qa-card"><summary><span class="q-no">Q11</span><span class="q-t">多轮对话检索为什么会失效？怎么解决？</span><span class="chev">▸</span></summary><div class="q-body"><p>追问经常省略主语（「它的端口是多少」），原文检索时 BM25 与向量都缺少可区分关键词。解决：检索前用当前模型把「最近 3 轮历史 + 追问」改写成自包含查询（temperature=0 小请求），实测 8 条指代型追问 Hit@1 从 0.62 到 0.88；改写失败自动回退原文，链路不受影响。</p></div></details>
+      <details class="qa-card"><summary><span class="q-no">Q12</span><span class="q-t">（加分）两条路径的拒答怎么保持一致？</span><span class="chev">▸</span></summary><div class="q-body"><p>最初 Agent 模式拒答偏松，问库外问题会用通用知识发挥；后来在「选中知识库」时给 Agent 注入了拒答约束（检索为空或不相关就明确说「知识库中没有找到相关信息」），让 Agent 路径与普通 RAG 路径的拒答行为统一。这是从实测里发现并修掉的问题，能体现工程迭代意识。</p></div></details>
+      <details class="qa-card"><summary><span class="q-no">Q13</span><span class="q-t">切片大小 / overlap 怎么定的？</span><span class="chev">▸</span></summary><div class="q-body"><p>按字符切并优先在自然边界（段落/句子）断开，留 overlap 防止答案被切断；可按文档类型调参。讲清「为什么不是越大越好/越小越好」的权衡即可。</p></div></details>
+      <details class="qa-card"><summary><span class="q-no">Q14</span><span class="q-t">工程化体现在哪？移动端怎么接的？</span><span class="chev">▸</span></summary><div class="q-body"><p>工程化：分层后端、统一 SSE 协议、Provider/embedding 的 WSL→Windows 主机回退、运行日志可观测、依赖可降级（缺 pdf/docx 库时报清晰错误而非崩溃）、配置持久化到后端。移动端：Android WebView 壳 + JS 桥（moaBridge）打通语音输入/TTS 播报/文件选择/安全区；H5 走统一后端 SSE，和桌面端共用一套接口——相对纯算法/纯后端候选人的差异化优势。</p></div></details>
+
+      <h3>一页产品介绍</h3>
+      <table>
+        <tr><th>项</th><th>内容</th></tr>
+        <tr><td>名称</td><td>企业研发/运维 AI Copilot 工作台</td></tr>
+        <tr><td>定位</td><td>面向研发、运维、交付团队的移动端 AI 助手</td></tr>
+        <tr><td>核心能力</td><td>知识库问答（带引用、可拒答）、日志分析、故障排查、接口/工单理解、测试用例生成、代码变更摘要、语音交互</td></tr>
+        <tr><td>技术亮点</td><td>移动端原生壳 + H5 流式、自研 RAG、工具型 Agent、多模型适配、全本地可私有部署</td></tr>
+        <tr><td>适用场景</td><td>企业内网知识问答、运维排障、研发提效、传统企业轻量私有化</td></tr>
+      </table>
+
+      <h3>演示视频脚本（3–5 分钟，可照着录）</h3>
+      <div class="callout warn">
+        <span class="ic">◈</span>
+        <div class="bd">
+          <span class="t">录制要点</span>
+          <p>演示「严格拒答」用普通模式（关闭 Agent），库外问题会干净拒答；演示「智能体」再开 Agent 模式。知识库内容建议用「运维手册 / 接口文档 / 故障案例」更贴合岗位定位。现成素材（<code>examples/</code> 目录）：<code>ops-manual.md</code> + <code>api-reference.md</code> + <code>faq-onboarding.md</code> 建知识库；<code>error.log</code> 演示日志分析；<code>sample.diff</code> 演示 Git diff 摘要。库内问题可直接用 <code>server/eval/dataset.jsonl</code> 里的问法（如「数据库连接池耗尽时的处置步骤？」）。</p>
+        </div>
+      </div>
+      <h4>录制前检查清单（30 秒过一遍）</h4>
+      <ul class="checklist">
+        <li>后端 8000 / 前端已启动，<code>/api/health</code> 返回 <code>{"ok":true}</code></li>
+        <li>设置里 Provider 已连通、模型已选好、Embedding 模型=<code>bge-m3</code>，已点过「保存连接配置到后端」</li>
+        <li>检索模式确认（默认混合检索；如要演示 rerank 需先装 <code>server/rerank/requirements.txt</code> 依赖）</li>
+        <li>目标知识库已「建立/重建索引」，列表显示分块数</li>
+        <li>新建一个干净对话，避免历史串味</li>
+        <li>准备好 2 段素材：<code>examples/error.log</code>、<code>examples/sample.diff</code>（贴进输入框即可）</li>
+      </ul>
+      <h4>分镜脚本</h4>
+      <ol class="flow">
+        <li><b>开场（约 20s）</b>：一句话定位「面向研发/运维团队的移动端 AI 助手，知识库问答 + 工具型 Agent，全自研、可私有部署」→ 手机/H5 打开，随便问一句展示流式输出与语音按钮。</li>
+        <li><b>知识库问答 + 引用（约 70s，普通模式）</b>：顶部「知识库」→ 展示已建库、上传的文件列表与分块数 → 点「聊天使用」选中 → 问一个库内问题 → 得到回答后点开「引用来源」，展示命中的文件名与片段。</li>
+        <li><b>库外拒答（约 30s，普通模式）</b>：问一个明显库外问题（如「今天天气怎么样？」）→ 展示模型明确回答「知识库中没有找到相关信息」，强调「不乱编」。</li>
+        <li><b>研发/运维 Agent 工具（约 80s，开启 Agent 模式）</b>：点「日志分析」快捷按钮，贴入异常日志 → 得到结构化的错误级别/异常类型/根因与排查建议；点「Git diff 摘要」，贴入一段 diff → 得到变更文件、增删行、风险点；展开「Agent 调用工具」查看本轮调用过程。</li>
+        <li><b>RAG × Agent 融合（约 40s，Agent 模式 + 选中知识库）</b>：问库内问题 → 展示 Agent 自主调用 <code>search_knowledge</code>、回答带「引用来源」，并能展开看工具调用；再问一个库外问题，展示同样会拒答（已统一两条路径的拒答行为）。</li>
+        <li><b>Docker 部署收尾（约 30s）</b>：切到终端敲 <code>docker compose up -d --build</code> → 等输出 <code>Container ... Started</code>（录制前可先 <code>docker compose down</code> 让这条命令有过程感）→ <code>curl http://localhost:8000/api/health</code> 显示 <code>{"ok":true}</code>，浏览器打开 <code>http://localhost:8000</code> 展示同一个应用已在容器里跑起来。口播：「整套应用一条 docker compose up 就能部署到企业内网，前端构建、后端服务打进同一个镜像，数据落在独立数据卷里。」</li>
+        <li><b>架构小结（约 20s）</b>：一句话（移动端壳 + H5 流式 + FastAPI 分层 + 自研 RAG + 工具型 Agent + 多模型）+ 强调「全自研、零额外服务、可私有部署」。</li>
+      </ol>
+      <h4>旁白可直接念的关键句</h4>
+      <ul>
+        <li>「检索命中时回答带可点击的引用来源；问知识库以外的问题会直接拒答，避免幻觉。」</li>
+        <li>「Agent 模式下，检索被封装成 <code>search_knowledge</code> 工具，由模型自己决定何时查、查什么，整个调用过程有日志可回溯。」</li>
+        <li>「整套 RAG 和 Agent 都是自研的，向量直接存 SQLite、用 numpy 算余弦相似度，不依赖外部向量库或编排平台，方便企业内网私有部署。」</li>
+        <li>「检索走混合链路：BM25 关键词加向量语义经 RRF 融合，再可选 bge-reranker 重排；我自建了 40 条 QA 的评测集，混合检索比纯向量首位命中提升 11 个百分点。」</li>
+      </ul>
+
+      <h2 class="reveal"><span class="no"></span>检索质量评测</h2>
+      <p>评测材料在 <code>server/eval/</code>：<code>dataset.jsonl</code> 40 条 QA（覆盖运维手册、接口文档、新人 FAQ 三份演示语料 <code>examples/*.md</code>），<code>run_eval.py</code> 跑 chunk_size × 检索模式 × rerank 的全参数对照，输出 Hit@1/4/8、MRR、平均与 P95 检索延迟。</p>
+      <pre data-lang="bash" data-path="运行评测（后端 venv + Ollama bge-m3 就绪后）">
+MYOPENWEB_DATA_DIR=server/eval/.data python -m server.eval.run_eval
+# 数据沙箱在 server/eval/.data，不污染正式库；报告写入 server/eval/results.md</pre>
+      <p>最近一次实测结论（CPU 环境，完整表见 <code>server/eval/results.md</code>）：</p>
+      <ul>
+        <li>混合检索比纯向量的 Hit@1 提升 8~11 个百分点（命令、编号、术语类问题受益最大），延迟仅增加约 50ms。</li>
+        <li>rerank（bge-reranker-base）把 chunk_size=600 的 Hit@1 从 0.93 拉到 1.00，但 CPU 推理让单次检索到 5s 量级——质量优先场景可开，在线低延迟场景建议 GPU / ONNX / 缩小候选池。</li>
+        <li>chunk_size 400/600/800 中，600 在该语料上是质量与块数的平衡点。</li>
+      </ul>
+      <p>另有三套补充评测：</p>
+      <ul>
+        <li><b>多轮改写评测</b>（<code>run_multiturn_eval.py</code>，8 条指代型追问）：原文直接检索 Hit@1 0.62 / MRR 0.792，LLM 改写后 0.88 / 0.938，报告见 <code>results-multiturn.md</code>。</li>
+        <li><b>生成质量评测</b>（<code>run_judge_eval.py</code>，LLM-as-judge）：生成（qwen2.5:3b）与评审（qwen3.5:4b）分离，对应 RAGAS 的 faithfulness / answer relevancy 两维打 1–5 分，实测 4.00 / 4.17，拒答计为忠实，报告见 <code>results-judge.md</code>。与 RAGAS 的关系：指标同源，但零依赖自研（不引入 ragas + langchain 依赖树），面试可讲「指标怎么定义、judge prompt 怎么写、小模型互评的噪声怎么控」。</li>
+        <li><b>检索自纠错对照评测</b>（<code>run_agentic_eval.py</code>，开/关对比）：标准 40 条集上基线已 Hit@4 0.97，Grader 仅触发 1/40 次、指标持平——说明自纠错在高基线上是「保险丝」而非提升项；换 12 条口语化措辞的困难集（<code>hard.jsonl</code>，top_k=2）后，Hit@4 0.83 → 0.92、MRR 0.708 → 0.736，救回 1 条基线未命中（报告见 <code>results-agentic.md</code> / <code>results-agentic-hard.md</code>）。结论：收益集中在「用户口语与文档书面语措辞错位」的查询，代价是每次多一个 Grader 请求（本地 CPU 小模型约 +20s，线上 API 级模型可忽略），所以默认关、按场景开。</li>
+      </ul>
+      <div class="callout info">
+        <span class="ic">◈</span>
+        <div class="bd">
+          <span class="t">面试可讲的点</span>
+          <p>评测集怎么建、Hit@K 与 MRR 怎么算、RRF 为什么免调权、rerank 的收益与代价、为什么中文 BM25 需要自己分词、检索评测与生成评测（faithfulness/relevancy）为什么要分开、自纠错为什么要「宽松判定 + 禁止复读原查询 + 有界重检索」。</p>
+        </div>
+      </div>
+
+      <h2 class="reveal"><span class="no"></span>OCR 文档解析（PP-StructureV3）</h2>
+      <p>针对扫描件/图片型 PDF、复杂表格、印章等 <code>pypdf</code> 抽不出内容的场景，新增一条可选的 OCR 解析通道。</p>
+      <h3>设计取舍</h3>
+      <ul>
+        <li>OCR 作为<b>独立本地服务</b>（PaddleOCR PP-StructureV3，CPU 可跑），后端通过 HTTP 调用，复用 Ollama 那套「可配置 URL + WSL→Windows 主机回退」。</li>
+        <li><b>主后端依赖保持精简</b>：paddle 相关依赖只装在独立 venv（<code>server/ocr/requirements.txt</code>），不进 <code>server/requirements.txt</code>，后端启动不受影响。</li>
+        <li><b>默认关闭、优雅降级</b>：未开启或服务不可达时退回 <code>pypdf</code>，上传永不失败（失败仅记一条 warning）。</li>
+        <li><b>触发模式</b>：<code>auto</code>（仅当 pypdf 文本为空/过短、判定为扫描件时才 OCR）/ <code>always</code>（PDF、图片都走 OCR）。</li>
+        <li><b>输出版面感知 Markdown</b>（保留标题/表格/阅读顺序），再喂给现有 <code>rag.split_text</code> 切片，提升召回质量。</li>
+      </ul>
+      <h3>相关文件</h3>
+      <ul>
+        <li><code>server/services/ocr_client.py</code>：base64 调用 PP-StructureV3 serving 的 <code>POST /layout-parsing</code>，解析 <code>result.layoutParsingResults[].markdown.text</code> 拼成全文。</li>
+        <li><code>server/services/file_extract.py</code>：<code>extract_text_async()</code> 按文件类型/模式决定是否走 OCR；图片类型必须开启 OCR 才解析。</li>
+        <li>配置项：<code>ocr_enabled</code> / <code>ocr_base_url</code>（默认 <code>http://localhost:8118</code>）/ <code>ocr_mode</code>，存于 <code>app_config</code>；前端在「设置 → 知识库 / RAG → OCR 文档解析」填写后点「保存连接配置到后端」。</li>
+      </ul>
+      <h3>启动 OCR 服务（独立 venv）</h3>
+      <pre data-lang="bash" data-path="OCR 独立服务">
+# Windows
+powershell -ExecutionPolicy Bypass -File scripts/ocr-server.ps1
+# WSL/Linux
+bash scripts/ocr-server.sh</pre>
+      <p>首次会建 <code>server/ocr/.venv</code> 并安装 <code>paddlepaddle</code> + <code>paddleocr</code>（约几百 MB，需联网），服务监听 <code>:8118</code>。确切 serving CLI 可能随 PaddleOCR/PaddleX 版本变化，失败时查官方 serving 文档。</p>
+      <h3>使用步骤</h3>
+      <ol>
+        <li>启动 OCR 服务（见上）。</li>
+        <li>设置里开启「OCR 文档解析」，填服务地址与模式，保存到后端。</li>
+        <li>新上传的 PDF/图片会按模式自动走 OCR；<b>已上传的文件</b>可在知识库文件列表点「重新抽取」，随后再「建立 / 重建索引」即可让旧文件用上 OCR 文本。</li>
+      </ol>
+
+      <h2 class="reveal"><span class="no"></span>Docker 部署</h2>
+      <ul>
+        <li><code>Dockerfile</code> 多阶段构建：Node 18 + pnpm 构建 H5 → python:3.12-slim 运行 FastAPI 并托管 <code>dist/</code>（<code>server/main.py</code> 在 dist 存在时挂载 StaticFiles，API 路由优先）。</li>
+        <li>数据目录用环境变量 <code>MYOPENWEB_DATA_DIR=/data</code> 重定向到卷 <code>myopenweb-data</code>；首次启动可用 <code>PROVIDER_TYPE</code> / <code>PROVIDER_BASE_URL</code> / <code>PROVIDER_API_KEY</code> / <code>EMBEDDING_MODEL</code> 播种配置（之后以设置页保存的为准）。</li>
+        <li><code>docker-compose.yml</code>：默认连宿主机 Ollama（<code>host.docker.internal</code>，Linux 用 <code>extra_hosts: host-gateway</code>）；<code>--profile ollama</code> 可把 Ollama 一起编排（此时 <code>PROVIDER_BASE_URL=http://ollama:11434/v1</code>）；<code>--profile pgvector</code> 起 PostgreSQL 向量后端。</li>
+        <li>用法见 README「Docker 一键部署」。OCR 与 rerank 属可选重依赖，不进主镜像。</li>
+      </ul>
+
+      <h2 class="reveal"><span class="no"></span>与主流框架对比（LangGraph 对照 demo）</h2>
+      <p><code>examples/langgraph-agent/</code> 用 LangGraph（StateGraph + ToolNode + 原生 function calling）复刻了主工程的「日志分析 + 知识检索」Agent，实测跑通（qwen2.5:3b）。这让「为什么不用 LangChain」从口头话术变成有代码支撑的结论：</p>
+      <table>
+        <tr><th>维度</th><th>主工程手写循环</th><th>LangGraph 版</th></tr>
+        <tr><td>控制流</td><td>for 循环 + 显式分支</td><td>StateGraph 声明节点与条件边</td></tr>
+        <tr><td>工具协议</td><td>prompt 约定 JSON，自己解析容错</td><td>bind_tools 走模型原生 function calling</td></tr>
+        <tr><td>状态管理</td><td>手动维护 messages 与步数</td><td>MessagesState 自动合并</td></tr>
+        <tr><td>可观测性</td><td>自建 agent_runs/agent_steps + SSE 事件</td><td>graph.stream() 事件流 / LangSmith</td></tr>
+        <tr><td>依赖成本</td><td>零新增</td><td>~40MB（langgraph + langchain 系）</td></tr>
+        <tr><td>模型兼容</td><td>任意能输出 JSON 的模型</td><td>依赖模型端 tools 支持</td></tr>
+      </table>
+      <div class="callout ok">
+        <span class="ic">✓</span>
+        <div class="bd">
+          <span class="t">结论</span>
+          <p>小规模、可控性优先时手写更划算（协议容错、观测字段全白盒）；出现多分支规划、并行工具、human-in-the-loop、checkpoint 恢复需求时应切 LangGraph，不再手写。主工程工具是纯函数，迁移只需 <code>@tool</code> 包装。完整说明见 <code>examples/langgraph-agent/README.md</code>。</p>
+        </div>
+      </div>
+
+      <h2 class="reveal"><span class="no"></span>MCP Server（把知识库暴露给任意 MCP 客户端）</h2>
+      <p><code>server/mcp_server/main.py</code> 用官方 <code>mcp</code> SDK（FastMCP）把服务层直接包成标准 MCP 工具，stdio transport，Cursor / Claude Desktop 等客户端可以子进程方式拉起并在 IDE 里直接查企业知识库：</p>
+      <ul>
+        <li><code>search_knowledge(knowledge, query, top_k)</code>：完整复用 <code>services/rag.py</code> 的 <code>query_knowledge</code>（混合检索 BM25+向量 RRF → 可选 rerank 全链路），支持按知识库名称或 id 检索</li>
+        <li><code>list_knowledge_bases()</code>：列出全部知识库与文件/块数量，供模型先发现再检索</li>
+        <li><code>analyze_log</code> / <code>summarize_git_diff</code> / <code>summarize_ticket</code> / <code>generate_test_cases</code>：复用 <code>services/agent_tools.py</code> 纯函数，一层 <code>@mcp.tool()</code> 包装——印证「业务与编排解耦，同一套工具可同时挂到自研 Agent 循环和 MCP 协议上」</li>
+      </ul>
+      <pre data-lang="json" data-path="Cursor 配置（项目内 .cursor/mcp.json 已就绪，Windows 宿主 + WSL venv）">
+{
+  "mcpServers": {
+    "myopenweb": {
+      "command": "wsl.exe",
+      "args": ["bash", "-lc",
+        "cd /mnt/d/ai_one/MyOpenWeb && ./.venv/bin/python -m server.mcp_server.main"]
+    }
+  }
+}</pre>
+      <p>验证方式：<code>./.venv/bin/python -m server.eval.mcp_smoke</code> 走真实 stdio 协议完成 list_tools → analyze_log → list_knowledge_bases → search_knowledge 四步冒烟；单测见 <code>server/tests/test_mcp_server.py</code>。</p>
+      <div class="callout info">
+        <span class="ic">◈</span>
+        <div class="bd">
+          <span class="t">面试话术</span>
+          <p>MCP 是「AI 工具层的 USB-C」。open-webui 内置的是 MCP <b>client</b>（连别人的工具）；MyOpenWeb 做的是 MCP <b>Server</b>（把企业知识库变成别人可连的工具），两者互补，且 Server 侧更能体现「已有服务如何标准化输出」的工程判断。</p>
+        </div>
+      </div>
+
+      <h2 class="reveal"><span class="no"></span>Token 用量观测（LLMOps 最小闭环）</h2>
+      <p>成本与用量是模型应用上线后的第一个运营问题。实现为三层透传，全链路不新增任何阻塞调用：</p>
+      <ul>
+        <li><b>后端换算</b>：Ollama 原生 <code>/api/chat</code> 的 done 帧携带 <code>prompt_eval_count</code> / <code>eval_count</code>，<code>providers.py</code> 统一换算成 OpenAI usage 结构（<code>prompt_tokens</code> / <code>completion_tokens</code> / <code>total_tokens</code>）；非流式直接挂到响应 JSON，流式挂在 <code>finish_reason=stop</code> 帧上。OpenAI Compatible 流式请求自动注入 <code>stream_options.include_usage</code>，上游（OpenAI / Ollama <code>/v1</code> / vLLM）会在末尾补发 usage 帧。</li>
+        <li><b>Agent 多轮累计</b>：Agent 循环每轮模型调用的 usage 写入该轮 <code>model_decision</code> 步骤的 <code>agent_steps.output_json</code>（运行日志可回放单轮成本），同时累计进最终 result，随 stop 帧透出。</li>
+        <li><b>前端展示</b>：<code>streaming.ts</code> 解析 usage 帧挂到消息上（OpenAI 的 usage 帧在 stop 之后到达，stop 帧挂起等 <code>[DONE]</code> 再吐出）；<code>MessageBubble</code> 在完成的回答底部以小字显示「输入 x / 输出 y tokens · 耗时 z s」，耗时为发送到完成的端到端时长。</li>
+      </ul>
+      <p>验证：非流式 / 流式 / Agent 三路真实 Ollama 冒烟均带 usage；Agent 两轮 854 + 1001 tokens 与 stop 帧累计 1855 一致；<code>agent_steps</code> 落库可查。</p>
+      <div class="callout info">
+        <span class="ic">◈</span>
+        <div class="bd">
+          <span class="t">面试话术</span>
+          <p>这是 LLMOps 的最小可用闭环——先让每一次调用的 token 成本可见、可落库、可按 run 回放，扩展方向才是按用户/按模型聚合报表与限额。</p>
+        </div>
+      </div>
+
+      <h2 class="reveal"><span class="no"></span>向量后端切换（pgvector，已实现）</h2>
+      <p>检索链路只依赖 <code>server/vectorstores/base.py</code> 的 <code>VectorStore</code> 协议（chunk 持久化 + <code>query_by_vector</code> / <code>query_by_keywords</code> 两个排序原语），RRF 融合、rerank、query rewrite、Grader 全部后端无关。</p>
+      <ul>
+        <li><b>默认 SQLite</b>（<code>sqlite_store.py</code>）：JSON 向量 + numpy 内存余弦（进程内矩阵缓存、版本戳失效）+ FTS5 BM25，零额外服务。</li>
+        <li><b>pgvector</b>（<code>pgvector_store.py</code>）：<code>vector</code> 列 + <code>ORDER BY embedding &lt;=&gt; %s::vector</code> 余弦（<code>dim</code> 列过滤维度不一致），关键词检索用生成列 <code>tokens_tsv tsvector</code> + GIN 索引 + <code>ts_rank</code>，分词沿用自研 CJK 二元组（索引/查询同源）。</li>
+        <li><b>切换方式</b>：<code>MYOPENWEB_VECTOR_BACKEND=pgvector</code> + <code>MYOPENWEB_PG_DSN=postgresql://...</code>（Docker：<code>MYOPENWEB_VECTOR_BACKEND=pgvector docker compose --profile pgvector up -d</code>）。业务表仍留 SQLite，只有向量数据换库；切换后需在知识库页重建索引。</li>
+        <li><b>质量保障</b>：<code>server/tests/test_vectorstore_contract.py</code> 同一套契约测试参数化跑双后端（向量排名 / 关键词命中 / 维度守卫 / 删除作用域 / 全量替换语义）；CI 的 backend job 起 <code>pgvector/pgvector:pg16</code> 服务容器真实执行 PG 侧用例，本地无 PG 时自动 skip。</li>
+        <li><b>规模再往上</b>：pinning 向量维度后加 HNSW 索引（当前精确扫描在十万级以内够用）；亿级再评估专用向量库。</li>
+      </ul>
+
+      <h2 class="reveal"><span class="no"></span>后续扩展预案（仅方案，未实现）</h2>
+      <ul>
+        <li><b>按文件增量索引</b>：当前为知识库整体重建，规模大后改为按文件维度增量更新 chunks 与关键词索引。</li>
+        <li><b>Dify 作为可选编排 provider</b>：把 Dify 作为一种 provider 接入，复杂工作流交给 Dify，简单场景仍走自研链路。</li>
+      </ul>
+
+      <nav class="doc-foot-nav" data-auto></nav>
+    </article>
+  </main>
+</div>
+<script src="assets/dossier.js"></script>
+</body>
+</html>

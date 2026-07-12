@@ -197,14 +197,6 @@ def _init_fts(conn: sqlite3.Connection) -> None:
         pass
 
 
-def fts_available() -> bool:
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chunks_fts'"
-        ).fetchone()
-    return row is not None
-
-
 @contextmanager
 def get_db() -> Iterator[sqlite3.Connection]:
     conn = _connect()
